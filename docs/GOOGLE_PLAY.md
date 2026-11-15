@@ -1,54 +1,52 @@
-# Google Play setup — Birds on Earth Radio — 0.5 Solar Scope Edition
+# Google Play setup
 
-This repository is the intended home for the Google AI Studio source and Android packaging project.
-**The Android wrapper is not yet generated.** The CI workflow is manual and intentionally fails with actionable errors until the prerequisites below are met.
+The Android app is **Birds on Earth Radio — 0.5 Solar Scope Edition**. Its Bubblewrap configuration is in [android/twa-manifest.json](../android/twa-manifest.json). The proposed Play package is `com.orwebcraft.birdsonearthradio`, with version name `0.5` and initial version code `1`. Confirm the application ID in Play Console before the first upload. The Bubblewrap version used in CI targets Android API 36.
 
-## 1. Verify source export
+## Check the hosted PWA
 
-In Google AI Studio, open the original project, then open **Settings → GitHub**. Confirm the linked repository is
-`Orwebcraft-ecologists-association/Birds-on-Earth-Radio-globe---Solar-System-Scope-edition` and push/sync. Ensure `main` contains the source files (such as `package.json`, `src/` and an HTML entrypoint), not only the generated README. Never commit Gemini/API secrets or `.env` files.
+The draft PR adds a web manifest and 192- and 512-pixel PNGs using the artwork in the AI Studio export. Deploy the web build to the intended TWA origin, then confirm the homepage links to the manifest and that the manifest and its icons are served over HTTPS. If another host is needed, update `host` and `webManifestUrl` in the TWA configuration together. Keep the web app, manifest and Digital Asset Links on that origin.
 
-## 2. Prepare your hosted PWA
+At the time of the setup, the homepage at `https://birds-on-earth-radio.ai.studio/` returned HTTP 200 without a manifest link, and the Digital Asset Links endpoint returned HTTP 404.
 
-The hosted app is `https://birds-on-earth-radio.ai.studio/`. Ensure its HTML links to a valid HTTPS web app manifest with icon files (including 192px and 512px icons), correct `start_url`, `scope`, and `display: standalone`. Find the **actual** manifest URL; do not assume `/manifest.webmanifest` exists.
+## Set up Digital Asset Links
 
-For an edge-to-edge Trusted Web Activity, your host must serve `/.well-known/assetlinks.json` with your package ID and the SHA-256 fingerprint of the certificate used to sign the distributed app (Google Play App Signing certificate for Play-distributed builds). If AI Studio hosting does not allow this, host the app on a domain where you can control the `.well-known` route. Verify this before publishing.
+In Play Console, obtain the SHA-256 fingerprint of the **app signing certificate** from **App integrity**. Use that fingerprint for Play-distributed installations. If testing an APK installed directly, add its signing certificate fingerprint as a separate entry in the array as needed.
 
-## 3. Generate Android project once
+Serve the following JSON at `/.well-known/assetlinks.json` on the TWA origin. Replace the fingerprint with the actual certificate value before deploying.
 
-On a workstation with Node.js, Java and Android SDK tools installed:
-
-```bash
-npm install --global @bubblewrap/cli
-mkdir android
-cd android
-bubblewrap init --manifest="https://YOUR-VERIFIED-HOST/PATH-TO-ACTUAL-WEB-MANIFEST"
+```json
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.orwebcraft.birdsonearthradio",
+      "sha256_cert_fingerprints": ["REPLACE_WITH_PLAY_APP_SIGNING_SHA256"]
+    }
+  }
+]
 ```
 
-Choose the display name `Birds on Earth Radio — 0.5 Solar Scope Edition` (short launcher label may need to be shorter), proposed application ID `com.orwebcraft.birdsonearthradio`, and version name `0.5`. Confirm package ID uniqueness in Play Console and that generated target SDK meets current Play requirements. The version name is **0.5**, not `0`.
+Check the endpoints with GET. The Digital Asset Links response must be HTTP 200 with a JSON content type and no redirect. Verify the package and certificate against Play Console, then open an installed build and check that the app launches fullscreen on the intended origin.
 
-Commit generated project files in `android/`, excluding keystores, credentials, build outputs and local SDK files. Verify `android/twa-manifest.json` is present.
+```sh
+curl --fail --show-error --silent https://birds-on-earth-radio.ai.studio/manifest.webmanifest
+curl --fail --show-error --silent --include https://birds-on-earth-radio.ai.studio/.well-known/assetlinks.json
+```
 
-## 4. Set GitHub Actions secrets
+## Test the GitHub Actions build
 
-Under **Settings → Secrets and variables → Actions**, set:
+PR checks build the exported web app and generate the Android project with Bubblewrap. The Android job uses the checked-in artwork over loopback during generation and produces the `birds-on-earth-radio-unsigned-aab` artifact. This checks packaging independently of the live website and Play credentials.
 
-- `ANDROID_KEYSTORE_BASE64`: base64-encoded **upload** keystore file (single line)
-- `ANDROID_KEYSTORE_PASSWORD`: keystore password
-- `ANDROID_KEY_PASSWORD`: key password
-- `ANDROID_KEY_ALIAS`: key alias
+To create a signed upload bundle after the workflow reaches the default branch, store these values in the GitHub Actions `android-signing` environment. Restrict the environment to the default branch.
 
-Do not commit the keystore or passwords. Back up the original upload keystore safely outside GitHub. For new Play apps, enroll in Play App Signing and use the correct Play app-signing certificate fingerprint in Digital Asset Links.
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | Single-line Base64 of the backed-up Play **upload** keystore |
+| `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
+| `ANDROID_KEY_PASSWORD` | Upload key password |
+| `ANDROID_KEY_ALIAS` | Upload key alias |
 
-To encode a local keystore on macOS/Linux: `base64 -w 0 upload-key.jks` (macOS: `base64 < upload-key.jks | tr -d '\\n'`); copy the resulting content directly to the secret, never a source file.
+From the default branch, run **Actions → Build Android App Bundle (TWA) → Run workflow**. The signing job uses a temporary keystore and provides the `birds-on-earth-radio-play-aab` artifact. Keep the original upload keystore and its recovery information outside source control. The workflow produces artifacts in GitHub Actions. Play Console upload and release are separate manual steps that require approval.
 
-## 5. Build and publish
-
-Go to **Actions → Build Android App Bundle (TWA) → Run workflow**, then download the `birds-on-earth-radio-play-aab` artifact. Upload the AAB manually to an **internal testing** track in Google Play Console. Test navigation, radio/audio playback, background behavior, network failures, privacy, permissions and screen sizes before production.
-
-The workflow intentionally **does not auto-publish**. A Play developer account, content declarations, data safety, store listing, icons, screenshots, contact details, privacy policy, relevant target API level and Google Play review requirements remain necessary.
-
-References:
-- https://ai.google.dev/gemini-api/docs/aistudio-build-mode
-- https://github.com/GoogleChromeLabs/bubblewrap/tree/main/packages/cli
-- https://developer.chrome.com/docs/android/trusted-web-activity/
+[Bubblewrap guide](https://github.com/GoogleChromeLabs/bubblewrap/tree/main/packages/cli) · [Digital Asset Links for TWAs](https://developer.chrome.com/docs/android/trusted-web-activity/android-for-web-devs) · [Google Play target API requirements](https://support.google.com/googleplay/android-developer/answer/11926878)
