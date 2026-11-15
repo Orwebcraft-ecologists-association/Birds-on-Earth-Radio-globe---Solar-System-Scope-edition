@@ -1,0 +1,22 @@
+# App secrets
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+
+# Node / frontend
+node_modules/
+dist/
+build/
+
+# Android local files and outputs
+android/.gradle/
+android/.idea/
+android/local.properties
+android/**/build/
+android/*.apk
+android/*.aab
+android/.bubblewrap/
