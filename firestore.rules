@@ -1,0 +1,239 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // === Global Hardened Primitives ===
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isVerified() && (
+        request.auth.token.email == 'or@orwebcraft.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isAdminByToken() {
+      return isVerified() && request.auth.token.email == 'or@orwebcraft.com';
+    }
+
+    function isValidUrl(val) {
+      return val is string && val.size() >= 1 && val.size() <= 500 && val.matches('^https?://.+');
+    }
+
+    function isValidLat(val) {
+      return val is number && val >= -90 && val <= 90;
+    }
+
+    function isValidLon(val) {
+      return val is number && val >= -180 && val <= 180;
+    }
+
+    // === Entity Validation Blueprints ===
+    function isValidUserPrivateProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && (!('photoURL' in data) || isValidUrl(data.photoURL))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFavoriteStation(data, userId, stationId) {
+      return data.keys().hasAll(['stationuuid', 'ownerId', 'name', 'url_resolved', 'country', 'geo_lat', 'geo_long', 'bitrate', 'createdAt'])
+        && data.keys().hasOnly(['stationuuid', 'ownerId', 'name', 'url_resolved', 'country', 'state', 'tags', 'geo_lat', 'geo_long', 'bitrate', 'createdAt'])
+        && data.stationuuid == stationId
+        && isValidId(data.stationuuid)
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && isValidId(data.ownerId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && isValidUrl(data.url_resolved)
+        && data.country is string && data.country.size() >= 1 && data.country.size() <= 100
+        && (!('state' in data) || (data.state is string && data.state.size() <= 100))
+        && (!('tags' in data) || (data.tags is string && data.tags.size() <= 200))
+        && isValidLat(data.geo_lat)
+        && isValidLon(data.geo_long)
+        && data.bitrate is number && data.bitrate >= 0 && data.bitrate <= 10000
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSubmittedStation(data, stationId) {
+      return data.keys().hasAll(['stationId', 'ownerId', 'name', 'url_resolved', 'country', 'geo_lat', 'geo_long', 'bitrate', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['stationId', 'ownerId', 'name', 'url_resolved', 'country', 'state', 'tags', 'geo_lat', 'geo_long', 'bitrate', 'status', 'createdAt', 'updatedAt'])
+        && data.stationId == stationId
+        && isValidId(data.stationId)
+        && isValidId(data.ownerId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && isValidUrl(data.url_resolved)
+        && data.country is string && data.country.size() >= 1 && data.country.size() <= 100
+        && (!('state' in data) || (data.state is string && data.state.size() <= 100))
+        && (!('tags' in data) || (data.tags is string && data.tags.size() <= 200))
+        && isValidLat(data.geo_lat)
+        && isValidLon(data.geo_long)
+        && data.bitrate is number && data.bitrate >= 0 && data.bitrate <= 10000
+        && data.status in ['pending', 'approved', 'rejected']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTreeObservation(data, observationId) {
+      return data.keys().hasAll(['observationId', 'ownerId', 'common_name', 'scientific_name', 'imageUrl', 'lat', 'lon', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['observationId', 'ownerId', 'common_name', 'scientific_name', 'imageUrl', 'lat', 'lon', 'status', 'createdAt', 'updatedAt'])
+        && data.observationId == observationId
+        && isValidId(data.observationId)
+        && isValidId(data.ownerId)
+        && data.common_name is string && data.common_name.size() >= 1 && data.common_name.size() <= 120
+        && data.scientific_name is string && data.scientific_name.size() >= 1 && data.scientific_name.size() <= 120
+        && isValidUrl(data.imageUrl)
+        && isValidLat(data.lat)
+        && isValidLon(data.lon)
+        && data.status in ['pending', 'approved', 'rejected']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // === Collection Rules ===
+
+    // Private PII profile document: /users/{userId}/private/profile
+    match /users/{userId}/private/{docId} {
+      allow get: if isVerified() && isValidId(userId) && docId == 'profile' && (isOwner(userId) || isAdmin());
+      allow list: if isOwner(userId) && existing().uid == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && docId == 'profile'
+        && isValidUserPrivateProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && docId == 'profile'
+        && isValidUserPrivateProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoURL', 'updatedAt']);
+      allow delete: if isOwner(userId) && isValidId(userId) && docId == 'profile';
+    }
+
+    // User Favorite Radio Stations: /users/{userId}/favorites/{stationId}
+    match /users/{userId}/favorites/{stationId} {
+      allow get: if isVerified() && isValidId(userId) && isValidId(stationId) && (isOwner(userId) || isAdmin());
+      allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(stationId)
+        && isValidFavoriteStation(incoming(), userId, stationId)
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isVerified() && isValidId(userId) && isValidId(stationId) && (isOwner(userId) || isAdmin());
+    }
+
+    // Submitted Radio Stations: /submittedStations/{stationId}
+    match /submittedStations/{stationId} {
+      allow get: if isValidId(stationId) && (
+        existing().status == 'approved' ||
+        (isVerified() && existing().ownerId == request.auth.uid) ||
+        isAdmin()
+      );
+      allow list: if existing().status == 'approved'
+        || (isVerified() && existing().ownerId == request.auth.uid)
+        || isAdminByToken();
+      allow create: if isVerified()
+        && isValidId(stationId)
+        && isValidSubmittedStation(incoming(), stationId)
+        && incoming().ownerId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified()
+        && isValidId(stationId)
+        && isValidSubmittedStation(incoming(), stationId)
+        && incoming().stationId == existing().stationId
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (
+            existing().ownerId == request.auth.uid
+            && existing().status == 'pending'
+            && incoming().status == 'pending'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'url_resolved', 'country', 'state', 'tags', 'geo_lat', 'geo_long', 'bitrate', 'updatedAt'])
+          ) ||
+          isAdmin()
+        );
+      allow delete: if isVerified() && isValidId(stationId) && (
+        existing().ownerId == request.auth.uid ||
+        isAdmin()
+      );
+    }
+
+    // Tree Observations: /treeObservations/{observationId}
+    match /treeObservations/{observationId} {
+      allow get: if isValidId(observationId) && (
+        existing().status == 'approved' ||
+        (isVerified() && existing().ownerId == request.auth.uid) ||
+        isAdmin()
+      );
+      allow list: if existing().status == 'approved'
+        || (isVerified() && existing().ownerId == request.auth.uid)
+        || isAdminByToken();
+      allow create: if isVerified()
+        && isValidId(observationId)
+        && isValidTreeObservation(incoming(), observationId)
+        && incoming().ownerId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified()
+        && isValidId(observationId)
+        && isValidTreeObservation(incoming(), observationId)
+        && incoming().observationId == existing().observationId
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (
+            existing().ownerId == request.auth.uid
+            && existing().status == 'pending'
+            && incoming().status == 'pending'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['common_name', 'scientific_name', 'imageUrl', 'lat', 'lon', 'updatedAt'])
+          ) ||
+          isAdmin()
+        );
+      allow delete: if isVerified() && isValidId(observationId) && (
+        existing().ownerId == request.auth.uid ||
+        isAdmin()
+      );
+    }
+  }
+}
