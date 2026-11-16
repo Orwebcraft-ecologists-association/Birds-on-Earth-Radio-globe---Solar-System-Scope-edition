@@ -1,0 +1,324 @@
+{
+  "entities": {
+    "UserPrivateProfile": {
+      "title": "UserPrivateProfile",
+      "description": "Private user account profile isolated for PII protection.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the user."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "Verified user email address."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "User display name."
+        },
+        "photoURL": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^https?://.+",
+          "description": "Profile avatar URL."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when profile was last updated."
+        }
+      },
+      "required": ["uid", "email", "displayName", "createdAt", "updatedAt"]
+    },
+    "FavoriteStation": {
+      "title": "FavoriteStation",
+      "description": "A radio station bookmarked by a user.",
+      "type": "object",
+      "properties": {
+        "stationuuid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique station identifier."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the user who saved this station."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Station name."
+        },
+        "url_resolved": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^https?://.+",
+          "description": "Resolved stream URL."
+        },
+        "country": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Country name."
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "State or city."
+        },
+        "tags": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Comma-separated genre tags."
+        },
+        "geo_lat": {
+          "type": "number",
+          "description": "Latitude coordinate."
+        },
+        "geo_long": {
+          "type": "number",
+          "description": "Longitude coordinate."
+        },
+        "bitrate": {
+          "type": "number",
+          "description": "Audio stream bitrate in kbps."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when bookmarked."
+        }
+      },
+      "required": ["stationuuid", "ownerId", "name", "url_resolved", "country", "geo_lat", "geo_long", "bitrate", "createdAt"]
+    },
+    "SubmittedStation": {
+      "title": "SubmittedStation",
+      "description": "A user-submitted radio station for the global globe map.",
+      "type": "object",
+      "properties": {
+        "stationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document ID of the submitted station."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the submitting user."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Radio station name."
+        },
+        "url_resolved": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^https?://.+",
+          "description": "Stream URL."
+        },
+        "country": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Country name."
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "State or province."
+        },
+        "tags": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Genre tags."
+        },
+        "geo_lat": {
+          "type": "number",
+          "description": "Latitude coordinate."
+        },
+        "geo_long": {
+          "type": "number",
+          "description": "Longitude coordinate."
+        },
+        "bitrate": {
+          "type": "number",
+          "description": "Bitrate in kbps."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"],
+          "description": "Moderation status."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": ["stationId", "ownerId", "name", "url_resolved", "country", "geo_lat", "geo_long", "bitrate", "status", "createdAt", "updatedAt"]
+    },
+    "TreeObservation": {
+      "title": "TreeObservation",
+      "description": "A user-submitted flora/tree specimen observation on the globe.",
+      "type": "object",
+      "properties": {
+        "observationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document ID of the tree observation."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the observer."
+        },
+        "common_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Common name of the tree specimen."
+        },
+        "scientific_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Scientific species name."
+        },
+        "imageUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^https?://.+",
+          "description": "External reference thumbnail URL."
+        },
+        "lat": {
+          "type": "number",
+          "description": "Latitude coordinate."
+        },
+        "lon": {
+          "type": "number",
+          "description": "Longitude coordinate."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"],
+          "description": "Moderation status."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": ["observationId", "ownerId", "common_name", "scientific_name", "imageUrl", "lat", "lon", "status", "createdAt", "updatedAt"]
+    },
+    "VideoCreation": {
+      "title": "VideoCreation",
+      "description": "Metadata record of an AI-generated celestial or nature video prompt (no binary payloads).",
+      "type": "object",
+      "properties": {
+        "creationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document ID of the video creation."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the user who generated this video."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["text", "image"],
+          "description": "Generation mode: text-to-video or image-to-video."
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Video generation prompt text."
+        },
+        "aspectRatio": {
+          "type": "string",
+          "enum": ["16:9", "9:16"],
+          "description": "Target aspect ratio of the generated video."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the video was generated."
+        }
+      },
+      "required": ["creationId", "ownerId", "mode", "prompt", "aspectRatio", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateProfile" },
+      "description": "Private PII-isolated profile document for each authenticated user."
+    },
+    "/users/{userId}/favorites/{stationId}": {
+      "schema": { "$ref": "#/entities/FavoriteStation" },
+      "description": "Per-user bookmarked radio stations."
+    },
+    "/users/{userId}/videoCreations/{creationId}": {
+      "schema": { "$ref": "#/entities/VideoCreation" },
+      "description": "Per-user prompt history metadata for generated videos."
+    },
+    "/submittedStations/{stationId}": {
+      "schema": { "$ref": "#/entities/SubmittedStation" },
+      "description": "User-submitted radio stations for review and display on the globe."
+    },
+    "/treeObservations/{observationId}": {
+      "schema": { "$ref": "#/entities/TreeObservation" },
+      "description": "User-submitted tree/flora specimen observations."
+    }
+  }
+}
