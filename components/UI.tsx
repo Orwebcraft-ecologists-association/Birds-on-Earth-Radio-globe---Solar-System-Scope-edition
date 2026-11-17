@@ -27,6 +27,7 @@ import { useFirebaseAuth } from './FirebaseProvider';
 import { ChatPanel, type ChatWindowSize } from './ChatPanel';
 import { LiveVoicePanel } from './LiveVoicePanel';
 import { VideoStudioPanel } from './VideoStudioPanel';
+import { getWikipediaUrl } from '../services/dataService';
 
 interface UIProps {
     statusMessage: string;
@@ -117,6 +118,7 @@ interface UIProps {
     videoHistory: VideoCreationRecord[];
     onVideoGenerated: (record: { mode: VideoMode; prompt: string; aspectRatio: VideoAspectRatio }) => Promise<void>;
     onDeleteVideoHistoryItem: (creationId: string) => void;
+    onSelectSpeciesPoint?: (point: InfoPanelData) => void;
 }
 
 const InfoPanel: React.FC<{
@@ -149,6 +151,7 @@ const InfoPanel: React.FC<{
     let title = 'Point Info';
     let subtitle = '';
     let image = '';
+    let wikipediaUrl: string | null = null;
     if (data.type === 'radio') {
         title = data.title;
         subtitle = data.place;
@@ -156,28 +159,55 @@ const InfoPanel: React.FC<{
         title = data.common;
         subtitle = data.scientific;
         image = data.imgUrl || '';
+        wikipediaUrl = getWikipediaUrl(data.scientific, data.common);
     } else if (data.type === 'tree') {
         title = data.common;
         subtitle = data.scientific;
         image = data.imageUrl;
+        wikipediaUrl = getWikipediaUrl(data.scientific, data.common);
     } else if (data.type === 'inaturalist') {
         title = data.common;
         subtitle = data.scientific;
         image = data.imageUrl;
+        wikipediaUrl = getWikipediaUrl(data.scientific, data.common);
     }
 
     const isCurrentRadio = data.type === 'radio' && currentStation?.stationuuid === data.id;
 
     return (
         <div className="fixed bottom-24 left-5 w-72 md:w-80 bg-slate-950/92 rounded-2xl border border-white/15 shadow-2xl z-[70] animate-fadeIn">
-            {image && <img src={image} className="w-full h-36 object-cover rounded-t-2xl border-b border-white/10" alt={title} />}
+            {image &&
+                (wikipediaUrl ? (
+                    <a href={wikipediaUrl} target="_blank" rel="noopener noreferrer" className="block group" title={`Open ${title} on Wikipedia`}>
+                        <img src={image} className="w-full h-36 object-cover rounded-t-2xl border-b border-white/10 group-hover:opacity-90 transition-opacity" alt={title} />
+                    </a>
+                ) : (
+                    <img src={image} className="w-full h-36 object-cover rounded-t-2xl border-b border-white/10" alt={title} />
+                ))}
             <div className="p-4">
                 <div className="flex justify-between items-start gap-2 mb-2">
                     <div className="min-w-0 flex-1">
-                        <h3 className="font-black text-lg text-white italic truncate" title={title}>
-                            {title}
-                        </h3>
-                        <p className="text-blue-400 text-xs font-bold italic truncate">{subtitle}</p>
+                        {wikipediaUrl ? (
+                            <a
+                                href={wikipediaUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block group"
+                                title={`Open ${title} on Wikipedia`}
+                            >
+                                <h3 className="font-black text-lg text-white italic truncate group-hover:text-blue-400 transition-colors" title={title}>
+                                    {title}
+                                </h3>
+                                <p className="text-blue-400 text-xs font-bold italic truncate group-hover:underline">{subtitle}</p>
+                            </a>
+                        ) : (
+                            <>
+                                <h3 className="font-black text-lg text-white italic truncate" title={title}>
+                                    {title}
+                                </h3>
+                                <p className="text-blue-400 text-xs font-bold italic truncate">{subtitle}</p>
+                            </>
+                        )}
                     </div>
                     <div className="flex items-center gap-1">
                         {data.type === 'radio' && (
@@ -200,6 +230,31 @@ const InfoPanel: React.FC<{
                         </button>
                     </div>
                 </div>
+                {wikipediaUrl && (
+                    <div className="mt-3 pt-3 border-t border-white/10 space-y-2.5">
+                        <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            <span>
+                                {data.type === 'bird'
+                                    ? `Confidence ${(data.score * 100).toFixed(0)}%`
+                                    : data.type === 'inaturalist'
+                                    ? `Observer: ${data.user}`
+                                    : 'Flora Specimen'}
+                            </span>
+                            <span className="font-mono text-slate-500">
+                                {data.lat.toFixed(1)}°, {data.lon.toFixed(1)}°
+                            </span>
+                        </div>
+                        <a
+                            href={wikipediaUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-600/25"
+                        >
+                            <span>Open in Wikipedia</span>
+                            <span>&nearr;</span>
+                        </a>
+                    </div>
+                )}
                 {isCurrentRadio && (
                     <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
                         <div className="flex items-center gap-3">
@@ -301,6 +356,7 @@ export const UI: React.FC<UIProps> = (props) => {
         videoHistory,
         onVideoGenerated,
         onDeleteVideoHistoryItem,
+        onSelectSpeciesPoint,
     } = props;
 
     const { user, authReady, authError, signInWithGoogle, signOutUser, clearAuthError } = useFirebaseAuth();
@@ -545,48 +601,89 @@ export const UI: React.FC<UIProps> = (props) => {
                         <div className="overflow-y-auto p-4 flex-1 space-y-4 no-scrollbar">
                             {activeTab === 'detections' &&
                                 sidebarSightings.map((s) => (
-                                    <div
+                                    <a
                                         key={s.id}
-                                        onClick={() => onFlyToLocation(s.lat, s.lon)}
+                                        href={getWikipediaUrl(s.scientific_name, s.common_name)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={() => {
+                                            onFlyToLocation(s.lat, s.lon);
+                                            onSelectSpeciesPoint?.({
+                                                id: s.id,
+                                                lat: s.lat,
+                                                lon: s.lon,
+                                                type: 'bird',
+                                                common: s.common_name,
+                                                scientific: s.scientific_name,
+                                                score: s.confidence,
+                                                createdAt: s.createdAt,
+                                                imgUrl: s.imgUrl,
+                                            });
+                                        }}
                                         className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 transition-colors cursor-pointer group border border-transparent hover:border-white/5"
+                                        title={`Open ${s.common_name} (${s.scientific_name}) on Wikipedia`}
                                     >
                                         <img
                                             src={s.imgUrl}
-                                            className="w-11 h-11 object-cover rounded-lg bg-slate-800"
+                                            className="w-11 h-11 object-cover rounded-lg bg-slate-800 flex-shrink-0"
                                             alt={s.common_name}
                                         />
-                                        <div>
-                                            <p className="font-bold text-xs text-white italic group-hover:text-blue-400 transition-colors">
+                                        <div className="min-w-0 flex-1">
+                                            <p className="font-bold text-xs text-white italic group-hover:text-blue-400 transition-colors truncate">
                                                 {s.common_name}
                                             </p>
+                                            <p className="text-[9px] text-slate-400 italic truncate">{s.scientific_name}</p>
                                             <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest">
                                                 Confidence: {(s.confidence * 100).toFixed(0)}%
                                             </p>
                                         </div>
-                                    </div>
+                                        <span className="text-[9px] font-black uppercase tracking-wider text-blue-400 opacity-75 group-hover:opacity-100 flex-shrink-0">
+                                            Wiki &nearr;
+                                        </span>
+                                    </a>
                                 ))}
 
                             {activeTab === 'inaturalist' &&
                                 inatObservations.map((obs) => (
-                                    <div
+                                    <a
                                         key={obs.id}
-                                        onClick={() => onFlyToLocation(obs.lat, obs.lon)}
+                                        href={getWikipediaUrl(obs.scientific_name, obs.common_name)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={() => {
+                                            onFlyToLocation(obs.lat, obs.lon);
+                                            onSelectSpeciesPoint?.({
+                                                id: obs.id,
+                                                lat: obs.lat,
+                                                lon: obs.lon,
+                                                type: 'inaturalist',
+                                                common: obs.common_name,
+                                                scientific: obs.scientific_name,
+                                                imageUrl: obs.imageUrl,
+                                                user: obs.user,
+                                            });
+                                        }}
                                         className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 cursor-pointer group border border-transparent hover:border-white/5"
+                                        title={`Open ${obs.common_name} (${obs.scientific_name}) on Wikipedia`}
                                     >
                                         <img
                                             src={obs.imageUrl}
-                                            className="w-11 h-11 object-cover rounded-lg bg-slate-800"
+                                            className="w-11 h-11 object-cover rounded-lg bg-slate-800 flex-shrink-0"
                                             alt={obs.common_name}
                                         />
-                                        <div>
-                                            <p className="font-bold text-xs text-white italic group-hover:text-cyan-400 transition-colors">
+                                        <div className="min-w-0 flex-1">
+                                            <p className="font-bold text-xs text-white italic group-hover:text-cyan-400 transition-colors truncate">
                                                 {obs.common_name}
                                             </p>
+                                            <p className="text-[9px] text-slate-400 italic truncate">{obs.scientific_name}</p>
                                             <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest">
                                                 Observer: {obs.user}
                                             </p>
                                         </div>
-                                    </div>
+                                        <span className="text-[9px] font-black uppercase tracking-wider text-cyan-400 opacity-75 group-hover:opacity-100 flex-shrink-0">
+                                            Wiki &nearr;
+                                        </span>
+                                    </a>
                                 ))}
 
                             {activeTab === 'stations' && (
@@ -671,25 +768,44 @@ export const UI: React.FC<UIProps> = (props) => {
                                     </button>
                                     <div className="space-y-2">
                                         {treeSightings.map((t) => (
-                                            <div
+                                            <a
                                                 key={t.id}
-                                                onClick={() => onFlyToLocation(t.lat, t.lon)}
+                                                href={getWikipediaUrl(t.scientific_name, t.common_name)}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                onClick={() => {
+                                                    onFlyToLocation(t.lat, t.lon);
+                                                    onSelectSpeciesPoint?.({
+                                                        id: t.id,
+                                                        lat: t.lat,
+                                                        lon: t.lon,
+                                                        type: 'tree',
+                                                        common: t.common_name,
+                                                        scientific: t.scientific_name,
+                                                        imageUrl: t.imageUrl,
+                                                        createdAt: t.createdAt,
+                                                    });
+                                                }}
                                                 className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 cursor-pointer group border border-transparent hover:border-white/5"
+                                                title={`Open ${t.common_name} (${t.scientific_name}) on Wikipedia`}
                                             >
                                                 <img
                                                     src={t.imageUrl}
-                                                    className="w-11 h-11 object-cover rounded-lg bg-slate-800"
+                                                    className="w-11 h-11 object-cover rounded-lg bg-slate-800 flex-shrink-0"
                                                     alt={t.common_name}
                                                 />
-                                                <div>
-                                                    <p className="font-bold text-xs text-white italic group-hover:text-emerald-400 transition-colors">
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="font-bold text-xs text-white italic group-hover:text-emerald-400 transition-colors truncate">
                                                         {t.common_name}
                                                     </p>
-                                                    <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest">
+                                                    <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest truncate">
                                                         {t.scientific_name}
                                                     </p>
                                                 </div>
-                                            </div>
+                                                <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 opacity-75 group-hover:opacity-100 flex-shrink-0">
+                                                    Wiki &nearr;
+                                                </span>
+                                            </a>
                                         ))}
                                     </div>
                                 </div>

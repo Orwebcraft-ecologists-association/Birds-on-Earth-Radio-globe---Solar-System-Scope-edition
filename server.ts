@@ -19,6 +19,7 @@ const FALLBACK_CHAT_MODELS = [
     'gemini-3-flash-preview',
     'gemini-3.1-flash-lite',
     'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
 ];
 const FALLBACK_INTERACTION_VIDEO_MODELS = [
     'gemini-omni-1.2-flash',
@@ -196,6 +197,12 @@ function isModelNotFoundError(err: unknown): boolean {
     );
 }
 
+function isTryNextFreeModelError(err: unknown): boolean {
+    if (isModelNotFoundError(err)) return true;
+    const status = extractErrorStatus(err);
+    return status === 402 || status === 403;
+}
+
 async function discoverModelsForKey(
     ai: GoogleGenAI,
     keyHash: string,
@@ -250,6 +257,8 @@ async function discoverModelsForKey(
             if (
                 lower.startsWith('gemini-') &&
                 !lower.includes('omni') &&
+                !lower.includes('-argon') &&
+                !lower.includes('-carbon') &&
                 !lower.includes('-image') &&
                 !lower.includes('-tts') &&
                 !lower.includes('transcribe') &&
@@ -336,7 +345,10 @@ function sanitizeHistory(rawHistory: unknown): Content[] {
     return cleaned;
 }
 
-function formatGeminiError(err: unknown): { status: number; message: string } {
+function formatGeminiError(
+    err: unknown,
+    feature: 'chat' | 'storyboard' | 'live' | 'video' = 'chat'
+): { status: number; message: string } {
     const statusCode = extractErrorStatus(err);
     const raw = getErrorText(err) || 'Unknown error';
     const lower = raw.toLowerCase();
@@ -350,7 +362,10 @@ function formatGeminiError(err: unknown): { status: number; message: string } {
     ) {
         return {
             status: 402,
-            message: 'Video generation requires an active paid Gemini API key with billing / prepay credits available (HTTP 402). Please verify your Google AI Studio billing balance or Settings > Secrets.',
+            message:
+                feature === 'video'
+                    ? 'MP4 video synthesis is not included on an unpaid (free-tier) Gemini API key (HTTP 402). Try Storyboard mode, Chat, or Live Voice with a free-tier key.'
+                    : 'The active GEMINI_API_KEY returned HTTP 402 (credits exhausted on that project). In Settings > Secrets, link an active unpaid (free-tier) Gemini API key from Google AI Studio.',
         };
     }
     if (
@@ -365,13 +380,13 @@ function formatGeminiError(err: unknown): { status: number; message: string } {
     ) {
         return {
             status: 403,
-            message: 'Gemini API key is invalid, unauthorized, or requires a paid key for this feature. Please verify your GEMINI_API_KEY configuration.',
+            message: 'Gemini API key is invalid or lacks permission for that model. Verify GEMINI_API_KEY in Settings > Secrets, or switch to an active free-tier key.',
         };
     }
     if (statusCode === 429 || lower.includes('resource_exhausted') || lower.includes('429') || lower.includes('quota')) {
         return {
             status: 429,
-            message: 'Rate limit or quota exceeded. Please wait a moment and try again, or check your API key quota.',
+            message: 'Rate limit or quota exceeded on the current API key. Please wait a moment and try again.',
         };
     }
     if (lower.includes('safety') || lower.includes('filtered') || lower.includes('rai')) {
@@ -383,7 +398,7 @@ function formatGeminiError(err: unknown): { status: number; message: string } {
     if (statusCode === 404 || lower.includes('not_found') || lower.includes('404') || lower.includes('is not found')) {
         return {
             status: 404,
-            message: 'Video generation models are not enabled for this API key or region yet. Please verify your paid Google AI Studio key permissions.',
+            message: 'That model is not enabled for this API key or region. Try Chat, Live Voice, or Storyboard using a free-tier key.',
         };
     }
     if (statusCode === 504 || lower.includes('timeout') || lower.includes('aborted')) {
@@ -577,6 +592,7 @@ async function startServer() {
         if (!apiKey || !ai) {
             res.json({
                 configured: false,
+                freeTierReady: false,
                 omniVideoModels: [],
                 veoModels: [],
                 liveModels: [],
@@ -588,12 +604,116 @@ async function startServer() {
         const discovered = await discoverModelsForKey(ai, keyHash);
         res.json({
             configured: true,
+            freeTierReady: true,
             omniVideoModels: discovered.omniVideoModels,
             veoModels: discovered.veoModels,
             liveModels: discovered.liveModels,
             chatModels: discovered.textModels.slice(0, 15),
             activeVideoWinner: workingVideoTargetByKey.get(keyHash) || null,
         });
+    });
+
+    app.post('/api/video/storyboard', async (req: Request, res: Response) => {
+        const body = (req.body || {}) as VideoGenerateRequestBody;
+        const mode = body.mode === 'image' ? 'image' : 'text';
+        const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+        const aspectRatio = body.aspectRatio && ALLOWED_VIDEO_RATIOS.has(body.aspectRatio)
+            ? body.aspectRatio
+            : '16:9';
+
+        if (!prompt) {
+            res.status(400).json({ error: 'A scene prompt is required.' });
+            return;
+        }
+        if (prompt.length > 2000) {
+            res.status(400).json({ error: 'Prompt is too long (max 2000 characters).' });
+            return;
+        }
+
+        let cleanedImageData = '';
+        let imageMime = 'image/jpeg';
+        if (mode === 'image') {
+            imageMime = typeof body.mimeType === 'string' ? body.mimeType.trim() : '';
+            if (!ALLOWED_IMAGE_MIMES.has(imageMime)) {
+                res.status(400).json({ error: 'Please upload a valid JPEG, PNG, or WebP photo.' });
+                return;
+            }
+            const rawBase64 = typeof body.imageBase64 === 'string' ? body.imageBase64.trim() : '';
+            cleanedImageData = rawBase64.replace(/^data:[^;]+;base64,/, '');
+            if (!cleanedImageData || cleanedImageData.length < 32) {
+                res.status(400).json({ error: 'Uploaded image data is empty or invalid.' });
+                return;
+            }
+        }
+
+        const apiKey = getApiKey();
+        const ai = getAiClient();
+        if (!ai || !apiKey) {
+            res.status(503).json({
+                error: 'Gemini API key is not configured. Please set an unpaid or standard GEMINI_API_KEY in Settings > Secrets.',
+            });
+            return;
+        }
+
+        const keyHash = hashKey(apiKey);
+        const cachedChat = workingChatModelByKey.get(keyHash);
+        const candidateModels = Array.from(
+            new Set([...(cachedChat ? [cachedChat] : []), ...FALLBACK_CHAT_MODELS])
+        );
+
+        const storyboardPrompt =
+            `Create a vivid 4-beat ${aspectRatio} cinematic director storyboard for this scene:\n"${prompt}"\n\n` +
+            `Format cleanly with:\n` +
+            `- Scene Logline\n` +
+            `- 4 Shot Beats (0-1.5s, 1.5-3s, 3-4.5s, 4.5-6s) with camera motion, lighting, and visual details\n` +
+            `- Ambient Soundscape cues`;
+
+        const contents =
+            mode === 'image'
+                ? {
+                      parts: [
+                          { inlineData: { mimeType: imageMime, data: cleanedImageData } },
+                          { text: `Analyze the uploaded photo and animate it into this storyboard:\n\n${storyboardPrompt}` },
+                      ],
+                  }
+                : storyboardPrompt;
+
+        let lastErr: unknown = null;
+        for (const candidateModel of candidateModels) {
+            try {
+                const response = await ai.models.generateContent({
+                    model: candidateModel,
+                    contents,
+                    config: {
+                        systemInstruction:
+                            'You are an astrophysics & wildlife documentary director creating concise, production-ready camera storyboards.',
+                        ...(supportsThinkingLevel(candidateModel)
+                            ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                            : {}),
+                    },
+                });
+                const storyboard = (response.text || '').trim();
+                if (!storyboard) continue;
+                workingChatModelByKey.set(keyHash, candidateModel);
+                res.json({ storyboard, aspectRatio, mode, model: candidateModel });
+                return;
+            } catch (err) {
+                lastErr = err;
+                if (!isTryNextFreeModelError(err)) {
+                    const formatted = formatGeminiError(err, 'storyboard');
+                    res.status(formatted.status).json({ error: formatted.message });
+                    return;
+                }
+            }
+        }
+
+        const formatted = formatGeminiError(lastErr, 'storyboard');
+        if (formatted.status >= 500) {
+            console.error('Gemini /api/video/storyboard error:', lastErr);
+        } else {
+            console.warn(`Gemini /api/video/storyboard status ${formatted.status}: ${formatted.message}`);
+        }
+        res.status(formatted.status).json({ error: formatted.message });
     });
 
     app.post('/api/chat', async (req: Request, res: Response) => {
@@ -648,10 +768,10 @@ async function startServer() {
                     break;
                 } catch (err) {
                     lastErr = err;
-                    if (!isModelNotFoundError(err)) {
+                    if (!isTryNextFreeModelError(err)) {
                         throw err;
                     }
-                    console.warn(`Chat model '${candidateModel}' unavailable (404), trying next fallback...`);
+                    console.warn(`Chat model '${candidateModel}' unavailable (${extractErrorStatus(err) || 'err'}), trying next fallback...`);
                 }
             }
 
@@ -675,8 +795,12 @@ async function startServer() {
             res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
             res.end();
         } catch (err) {
-            console.error('Gemini /api/chat error:', err);
-            const formatted = formatGeminiError(err);
+            const formatted = formatGeminiError(err, 'chat');
+            if (formatted.status >= 500) {
+                console.error('Gemini /api/chat error:', err);
+            } else {
+                console.warn(`Gemini /api/chat status ${formatted.status}: ${formatted.message}`);
+            }
             if (!res.headersSent) {
                 res.status(formatted.status).json({ error: formatted.message });
             } else {
@@ -727,7 +851,7 @@ async function startServer() {
         const ai = getAiClient();
         if (!ai || !apiKey) {
             res.status(503).json({
-                error: 'Gemini API key is not configured. Please confirm a paid API key in AI Studio.',
+                error: 'Gemini API key is not configured. Set an unpaid or standard GEMINI_API_KEY in Settings > Secrets.',
             });
             return;
         }
@@ -829,7 +953,7 @@ async function startServer() {
                     continue;
                 }
 
-                const formatted = formatGeminiError(err);
+                const formatted = formatGeminiError(err, 'video');
                 if (formatted.status >= 500) {
                     console.error(`Gemini /api/video/generate error (${candidate.model}):`, err);
                 } else {
@@ -840,8 +964,12 @@ async function startServer() {
             }
         }
 
-        console.error('Gemini /api/video/generate error: all video candidates failed.', lastErr);
-        const formatted = formatGeminiError(lastErr);
+        const formatted = formatGeminiError(lastErr, 'video');
+        if (formatted.status >= 500) {
+            console.error('Gemini /api/video/generate error: all video candidates failed.', lastErr);
+        } else {
+            console.warn(`Gemini /api/video/generate status ${formatted.status}: ${formatted.message}`);
+        }
         res.status(formatted.status).json({ error: formatted.message });
     });
 
@@ -1017,7 +1145,7 @@ async function startServer() {
                                 return;
                             }
                             if (!isClosed && clientWs.readyState === WebSocket.OPEN) {
-                                const formatted = formatGeminiError(err);
+                                const formatted = formatGeminiError(err, 'live');
                                 clientWs.send(JSON.stringify({ type: 'error', error: formatted.message }));
                             }
                         },
@@ -1049,7 +1177,7 @@ async function startServer() {
                     return;
                 }
                 if (!isClosed && clientWs.readyState === WebSocket.OPEN) {
-                    const formatted = formatGeminiError(err);
+                    const formatted = formatGeminiError(err, 'live');
                     clientWs.send(JSON.stringify({ type: 'error', error: formatted.message }));
                     clientWs.close(1011, 'Live connection failed');
                 }

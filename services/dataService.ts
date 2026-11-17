@@ -414,6 +414,17 @@ export const fetchINaturalistObservations = async (): Promise<INaturalistObserva
     }
 };
 
+export const getWikipediaUrl = (scientificName?: string, commonName?: string): string => {
+    const sci = (scientificName || '').trim();
+    const common = (commonName || '').trim();
+    const genericTaxa = new Set(['', 'unknown', 'plantae', 'animalia', 'aves', 'fungi', 'insecta']);
+    const query = !genericTaxa.has(sci.toLowerCase()) ? sci : common || sci;
+    if (!query) {
+        return 'https://en.wikipedia.org/wiki/Main_Page';
+    }
+    return `https://en.wikipedia.org/wiki/${encodeURIComponent(query.replace(/\s+/g, '_'))}`;
+};
+
 export const getImageURL = async (scientificName: string, cache: Map<string, string>): Promise<string> => {
     if (cache.has(scientificName)) {
         return cache.get(scientificName)!;

@@ -302,7 +302,7 @@ export const LiveVoicePanel: React.FC<LiveVoicePanelProps> = ({ activeRole, view
             <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-white/10">
                 <div>
                     <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Live Voice Conversation</p>
-                    <p className="text-[10px] text-slate-400">Gemini Live &bull; Bidirectional Audio</p>
+                    <p className="text-[10px] text-slate-400">Gemini 3.8 Live &bull; Bidirectional Audio &bull; Free Key</p>
                 </div>
                 <span
                     className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border ${

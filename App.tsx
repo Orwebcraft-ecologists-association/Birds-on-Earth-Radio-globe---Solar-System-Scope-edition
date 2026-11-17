@@ -124,7 +124,7 @@ const CelestialDetailPanel: React.FC<{
 };
 
 const HoverCard: React.FC<{
-    data: RadioPointData | INaturalistPointData | TreePointData | CelestialPointData,
+    data: RadioPointData | BirdPointData | INaturalistPointData | TreePointData | CelestialPointData,
     position: { x: number, y: number },
     currentStation: RadioStation | null,
     isPlaying: boolean,
@@ -138,6 +138,24 @@ const HoverCard: React.FC<{
     isBroken: boolean,
 }> = ({ data, position, currentStation, isPlaying, isAudioLoading, volume, onVolumeChange, onToggleStation, isStationLocked, isFavorite, onToggleFavorite, isBroken }) => {
     
+    if (data.type === 'bird') {
+        const d = data as BirdPointData;
+        return (
+            <div className="absolute z-10 w-64 bg-slate-950/95 rounded-3xl p-5 pointer-events-none transition-all duration-300 animate-fadeIn shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-white/15" style={{ left: position.x, top: position.y, transform: 'translate(-50%, calc(-100% - 35px))' }}>
+                {d.imgUrl && <img src={d.imgUrl} alt={d.common} className="w-full h-36 object-cover rounded-2xl mb-4 bg-slate-900 shadow-inner" />}
+                <h4 className="font-black text-white text-lg leading-tight italic">{d.common}</h4>
+                <p className="text-xs text-blue-400 italic mb-3 font-bold tracking-tight">{d.scientific}</p>
+                <div className="flex items-center justify-between gap-2 pt-3 border-t border-white/10">
+                    <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full bg-rose-400"></div>
+                        <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">BirdNET {(d.score * 100).toFixed(0)}%</span>
+                    </div>
+                    <span className="text-[9px] uppercase font-black tracking-wider text-blue-400">Click for Wikipedia</span>
+                </div>
+            </div>
+        );
+    }
+
     if (data.type === 'inaturalist' || data.type === 'tree') {
         const d = data as INaturalistPointData | TreePointData;
         return (
@@ -145,9 +163,12 @@ const HoverCard: React.FC<{
                 <img src={d.imageUrl} alt={d.common} className="w-full h-36 object-cover rounded-2xl mb-4 bg-slate-900 shadow-inner" />
                 <h4 className="font-black text-white text-lg leading-tight italic">{d.common}</h4>
                 <p className="text-xs text-blue-400 italic mb-4 font-bold tracking-tight">{d.scientific}</p>
-                <div className="flex items-center gap-2 pt-4 border-t border-white/10">
-                    <div className={`w-2.5 h-2.5 rounded-full ${data.type === 'inaturalist' ? 'bg-cyan-500' : 'bg-emerald-500'}`}></div>
-                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">{data.type === 'inaturalist' ? 'iNaturalist Global' : 'Local Flora'}</span>
+                <div className="flex items-center justify-between gap-2 pt-4 border-t border-white/10">
+                    <div className="flex items-center gap-2">
+                        <div className={`w-2.5 h-2.5 rounded-full ${data.type === 'inaturalist' ? 'bg-cyan-500' : 'bg-emerald-500'}`}></div>
+                        <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">{data.type === 'inaturalist' ? 'iNaturalist' : 'Local Flora'}</span>
+                    </div>
+                    <span className="text-[9px] uppercase font-black tracking-wider text-blue-400">Click for Wikipedia</span>
                 </div>
             </div>
         );
@@ -785,6 +806,7 @@ const App: React.FC = () => {
                 onHover={(d, p) => { setHoverData(d); setHoverPosition(p || null); }}
                 onExpiredBirdIds={(ids) => setBirdSightings(prev => prev.filter(s => !ids.includes(s.id)))}
                 onStationClick={(d) => { setPinnedData(d); handleStationClick(d); }}
+                onPointClick={(d) => { setPinnedData(d); }}
                 currentStation={currentStation}
                 isSoundscapeMode={false}
                 weatherPreset={weatherPreset}
@@ -819,7 +841,7 @@ const App: React.FC = () => {
             <UI
                 statusMessage={statusMessage} totalSubmissions={totalSubmissions} latestSubmission={latestSubmission} sidebarSightings={sidebarSightings} treeSightings={treeSightings} inatObservations={inatObservations} pinnedData={pinnedData} onCloseInfoPanel={() => setPinnedData(null)} filters={filters} uniqueBirdSpecies={uniqueBirdSpecies} uniqueRadioStations={allStations} filteredRadioStationsForSearch={filteredRadioStationsForSearch} uniqueCountries={[]} uniqueGenres={[]} liveBirdCount={birdSightings.length} onShowLocation={() => {}} userLocation={userLocation} onAttractBirds={() => {}} isAttracting={false} currentStation={currentStation} isPlaying={isPlaying} isAudioLoading={isAudioLoading} volume={volume} onPlayPause={handlePlayPause} onVolumeChange={(v) => { setVolume(v); if(audioRef.current) audioRef.current.volume = v; }} audioError={audioError} audioContextRef={{current: null}} audioAnalyserRef={{current: null}} isStationLocked={isStationLocked} onToggleLock={() => setIsStationLocked(!isStationLocked)} isAboutModalOpen={isAboutModalOpen} onOpenAboutModal={() => setIsAboutModalOpen(true)} onCloseAboutModal={() => setIsAboutModalOpen(false)} isSoundscapeMode={false} onToggleSoundscapeMode={() => {}} weatherPreset={weatherPreset} onWeatherPresetChange={setWeatherPreset} sunIntensity={sunIntensity} onSunIntensityChange={setSunIntensity} sunOrbitSpeed={sunOrbitSpeed} onSunOrbitSpeedChange={setSunOrbitSpeed} starRotationSpeed={starRotationSpeed} onStarRotationSpeedChange={setStarRotationSpeed} isUiVisible={isUiVisible} onToggleUIVisibility={() => setIsUiVisible(v => !v)} onToggleExplorePanel={() => setIsExplorePanelOpen(!isExplorePanelOpen)} queue={[]} onRemoveFromQueue={() => {}} onSelectAndPlayStation={(id) => { const s = allStations.find(st => st.stationuuid === id); if (s) { handleStationClick({ id: s.stationuuid, lat: s.geo_lat, lon: s.geo_long, type: 'radio', title: s.name, place: s.state || s.country, url: s.url_resolved, country: s.country, state: s.state, tags: s.tags }); setFlyToTarget({ lat: s.geo_lat, lon: s.geo_long }); } }} onSelectAndFindBird={(n) => {}} onFlyToLocation={(lat, lon) => setFlyToTarget({lat, lon})} onSelectCelestialTarget={handleSelectCelestialTarget} favoriteStations={favoriteStations} onToggleFavorite={handleToggleFavorite} onRadioTextChange={t => setFilters(f => ({ ...f, radio: { ...f.radio, text: t } }))} onRadioCountryChange={() => {}} onRadioGenreChange={() => {}} onBirdNameChange={() => {}} onBirdSelect={() => {}} activeTab={activeTab} onActiveTabChange={setActiveTab} brokenStationIds={brokenStationIds} onOpenSubmissionModal={() => setIsSubmissionModalOpen(true)} isSubmissionModalOpen={isSubmissionModalOpen} onCloseSubmissionModal={() => setIsSubmissionModalOpen(false)} onStationSubmit={() => {}} newStationData={newStationData} setNewStationData={setNewStationData} onSetPickerMode={() => { setIsSubmissionModalOpen(false); setIsLocationPickerMode(true); }} onOpenTreeSubmissionModal={() => setIsTreeSubmissionModalOpen(true)} timescape={timescape} onTimescapeChange={setTimescape}
                 chatMessages={chatMessages} chatRole={chatRole} chatModel={chatModel} isChatStreaming={isChatStreaming} chatError={chatError} viewerContext={buildChatContext()} onChatRoleChange={setChatRole} onChatModelChange={setChatModel} onSendChatMessage={handleSendChatMessage} onClearChat={handleClearChat} onDismissChatError={() => setChatError(null)}
-                cameraViewPreset={cameraViewPreset} onCameraViewPresetChange={setCameraViewPreset} videoHistory={videoHistory} onVideoGenerated={handleVideoGenerated} onDeleteVideoHistoryItem={handleDeleteVideoHistoryItem}
+                cameraViewPreset={cameraViewPreset} onCameraViewPresetChange={setCameraViewPreset} videoHistory={videoHistory} onVideoGenerated={handleVideoGenerated} onDeleteVideoHistoryItem={handleDeleteVideoHistoryItem} onSelectSpeciesPoint={(pt) => setPinnedData(pt)}
             />
             <TreeSubmissionModal isOpen={isTreeSubmissionModalOpen && !isTreeLocationPickerMode} onClose={() => setIsTreeSubmissionModalOpen(false)} onSubmit={handleTreeSubmit} onSetPickerMode={() => { setIsTreeSubmissionModalOpen(false); setIsTreeLocationPickerMode(true); }} isIdentifying={isIdentifyingTree} location={newTreeLocation} />
             <SubmissionModal isOpen={isSubmissionModalOpen && !isLocationPickerMode} onClose={() => setIsSubmissionModalOpen(false)} onSubmit={handleStationSubmit} newStationData={newStationData} setNewStationData={setNewStationData} onSetPickerMode={() => { setIsSubmissionModalOpen(false); setIsLocationPickerMode(true); }} />
@@ -833,7 +855,7 @@ const App: React.FC = () => {
                 />
             )}
 
-            {hoverData && hoverPosition && (hoverData.type === 'radio' || hoverData.type === 'inaturalist' || hoverData.type === 'tree' || hoverData.type === 'planet' || hoverData.type === 'celestial-star' || hoverData.type === 'sun' || hoverData.type === 'moon') && (
+            {hoverData && hoverPosition && (hoverData.type === 'radio' || hoverData.type === 'bird' || hoverData.type === 'inaturalist' || hoverData.type === 'tree' || hoverData.type === 'planet' || hoverData.type === 'celestial-star' || hoverData.type === 'sun' || hoverData.type === 'moon') && (
                 <HoverCard data={hoverData as any} position={hoverPosition} currentStation={currentStation} isPlaying={isPlaying} isAudioLoading={isAudioLoading} volume={volume} onVolumeChange={(v) => { setVolume(v); if(audioRef.current) audioRef.current.volume = v; }} onToggleStation={handleStationClick} isStationLocked={isStationLocked} isFavorite={hoverData.type === 'radio' ? favoriteStations.some(s => s.stationuuid === hoverData.id) : false} onToggleFavorite={handleToggleFavorite} isBroken={hoverData.type === 'radio' && brokenStationIds.has(hoverData.id as string)} />
             )}
         </div>

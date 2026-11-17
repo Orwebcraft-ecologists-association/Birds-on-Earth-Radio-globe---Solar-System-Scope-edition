@@ -1,6 +1,7 @@
 
 import React from 'react';
 import type { RadioStation, BirdSighting } from '../types';
+import { getWikipediaUrl } from '../services/dataService';
 
 interface ExplorePanelProps {
     isOpen: boolean;
@@ -84,17 +85,24 @@ export const ExplorePanel: React.FC<ExplorePanelProps> = ({ isOpen, onClose, rec
                             <h3 className="font-bold text-slate-300 mb-3 tracking-wider uppercase text-sm">Recent Detections</h3>
                             <div className="space-y-2">
                                 {recentSightings.length > 0 ? recentSightings.map(sighting => (
-                                    <button
+                                    <a
                                         key={sighting.id}
+                                        href={getWikipediaUrl(sighting.scientific_name, sighting.common_name)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
                                         onClick={() => onSelectBird(sighting.scientific_name)}
-                                        className="w-full text-left flex items-center gap-3 p-2 rounded-lg hover:bg-white/10 transition-colors"
+                                        className="w-full text-left flex items-center gap-3 p-2 rounded-lg hover:bg-white/10 transition-colors group"
+                                        title={`Open ${sighting.common_name} on Wikipedia`}
                                     >
                                         <img src={sighting.imgUrl} alt={sighting.common_name} className="w-12 h-12 object-cover rounded-md flex-shrink-0 bg-slate-700" />
                                         <div className="flex-1 overflow-hidden">
-                                            <p className="font-bold truncate" title={sighting.common_name}>{sighting.common_name}</p>
+                                            <p className="font-bold truncate group-hover:text-blue-400 transition-colors" title={sighting.common_name}>{sighting.common_name}</p>
                                             <p className="text-xs text-slate-400 italic truncate" title={sighting.scientific_name}>{sighting.scientific_name}</p>
                                         </div>
-                                    </button>
+                                        <span className="text-[10px] font-black uppercase tracking-wider text-blue-400 opacity-75 group-hover:opacity-100 flex-shrink-0">
+                                            Wiki &nearr;
+                                        </span>
+                                    </a>
                                 )) : (
                                      <p className="text-slate-400 text-center py-4 text-sm">No recent detections to display.</p>
                                 )}

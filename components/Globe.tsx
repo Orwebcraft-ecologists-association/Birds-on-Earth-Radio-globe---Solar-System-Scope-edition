@@ -119,6 +119,7 @@ interface GlobeProps {
     onHover: (data: InfoPanelData | null, position?: { x: number; y: number }) => void;
     onExpiredBirdIds: (ids: number[]) => void;
     onStationClick: (station: RadioPointData) => void;
+    onPointClick?: (point: PointData) => void;
     currentStation: any;
     isSoundscapeMode: boolean;
     weatherPreset: WeatherPreset;
@@ -250,6 +251,7 @@ const Fallback2DGlobe: React.FC<{
     inatPoints: PointData[];
     onHover: (data: InfoPanelData | null, position?: { x: number; y: number }) => void;
     onStationClick: (station: RadioPointData) => void;
+    onPointClick?: (point: PointData) => void;
     flyToTarget: { lat: number; lon: number; ts?: number } | null;
     webglReason: 'blocked' | 'lost';
 }> = ({
@@ -259,6 +261,7 @@ const Fallback2DGlobe: React.FC<{
     inatPoints,
     onHover,
     onStationClick,
+    onPointClick,
     flyToTarget,
     webglReason,
 }) => {
@@ -456,6 +459,8 @@ const Fallback2DGlobe: React.FC<{
                         const hit = findNearest(e.clientX, e.clientY);
                         if (hit?.type === 'radio') {
                             onStationClick(hit as RadioPointData);
+                        } else if (hit) {
+                            onPointClick?.(hit);
                         }
                     }
                 }}
@@ -494,6 +499,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
         celestialFlyToTarget,
         cameraViewPreset = 'earth',
         onStationClick,
+        onPointClick,
         isLocationPickerMode,
         onLocationPick,
         isTreeLocationPickerMode,
@@ -508,6 +514,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
     const sunIntensityRef = useRef(sunIntensity);
     const onHoverRef = useRef(onHover);
     const onStationClickRef = useRef(onStationClick);
+    const onPointClickRef = useRef(onPointClick);
     const locationPickerRef = useRef({ isLocationPickerMode, onLocationPick, isTreeLocationPickerMode, onTreeLocationPick });
     const [astrometryTarget, setAstrometryTarget] = useState<CelestialPointData | null>(null);
     const [webglStatus, setWebglStatus] = useState<'ready' | 'lost' | 'unavailable'>('ready');
@@ -517,6 +524,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
     useEffect(() => { sunIntensityRef.current = sunIntensity; }, [sunIntensity]);
     useEffect(() => { onHoverRef.current = onHover; }, [onHover]);
     useEffect(() => { onStationClickRef.current = onStationClick; }, [onStationClick]);
+    useEffect(() => { onPointClickRef.current = onPointClick; }, [onPointClick]);
     useEffect(() => {
         locationPickerRef.current = { isLocationPickerMode, onLocationPick, isTreeLocationPickerMode, onTreeLocationPick };
     }, [isLocationPickerMode, onLocationPick, isTreeLocationPickerMode, onTreeLocationPick]);
@@ -1127,6 +1135,8 @@ export const Globe: React.FC<GlobeProps> = (props) => {
                         while (obj && !obj.userData?.type) obj = obj.parent;
                         if (obj?.userData?.type === 'radio') {
                             onStationClickRef.current(obj.userData as RadioPointData);
+                        } else if (obj?.userData?.type) {
+                            onPointClickRef.current?.(obj.userData as PointData);
                         }
                     }
                 }
@@ -1439,6 +1449,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
                     inatPoints={inatPoints}
                     onHover={onHover}
                     onStationClick={onStationClick}
+                    onPointClick={onPointClick}
                     flyToTarget={flyToTarget}
                     webglReason={webglStatus === 'lost' ? 'lost' : 'blocked'}
                 />

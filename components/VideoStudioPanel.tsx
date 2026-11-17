@@ -28,6 +28,7 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
     onDeleteHistoryItem,
 }) => {
     const [mode, setMode] = useState<VideoMode>('text');
+    const [outputEngine, setOutputEngine] = useState<'storyboard' | 'mp4'>('storyboard');
     const [prompt, setPrompt] = useState(TEXT_SUGGESTIONS[0]);
     const [aspectRatio, setAspectRatio] = useState<VideoAspectRatio>('16:9');
     const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
@@ -36,6 +37,7 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
+    const [generatedStoryboard, setGeneratedStoryboard] = useState<string | null>(null);
     const [generatedModel, setGeneratedModel] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -74,15 +76,14 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
         reader.readAsDataURL(file);
     };
 
-    const handleGenerate = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const runGeneration = async (engine: 'storyboard' | 'mp4') => {
         const trimmed = prompt.trim();
         if (!trimmed) {
-            setError('Please enter a prompt describing your video.');
+            setError('Please enter a prompt describing your scene.');
             return;
         }
         if (mode === 'image' && !imageBase64) {
-            setError('Please upload a photo to animate into a video.');
+            setError('Please upload a photo to analyze or animate.');
             return;
         }
 
@@ -90,7 +91,8 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
         setIsGenerating(true);
 
         try {
-            const res = await fetch('/api/video/generate', {
+            const endpoint = engine === 'storyboard' ? '/api/video/storyboard' : '/api/video/generate';
+            const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -103,16 +105,26 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
 
             const json = await res.json().catch(() => ({}));
             if (!res.ok) {
-                throw new Error(json?.error || `Video generation failed (${res.status})`);
-            }
-            if (!json?.videoBase64) {
-                throw new Error('No video payload returned by the server.');
+                throw new Error(json?.error || `Generation failed (${res.status})`);
             }
 
-            const mime = json.mimeType || 'video/mp4';
-            const dataUri = `data:${mime};base64,${json.videoBase64}`;
-            setGeneratedVideoUrl(dataUri);
-            setGeneratedModel(typeof json.model === 'string' ? json.model : null);
+            if (engine === 'storyboard') {
+                if (!json?.storyboard) {
+                    throw new Error('No storyboard returned by the server.');
+                }
+                setGeneratedStoryboard(json.storyboard);
+                setGeneratedVideoUrl(null);
+                setGeneratedModel(typeof json.model === 'string' ? json.model : 'gemini-4-hydrogen');
+            } else {
+                if (!json?.videoBase64) {
+                    throw new Error('No video payload returned by the server.');
+                }
+                const mime = json.mimeType || 'video/mp4';
+                const dataUri = `data:${mime};base64,${json.videoBase64}`;
+                setGeneratedVideoUrl(dataUri);
+                setGeneratedStoryboard(null);
+                setGeneratedModel(typeof json.model === 'string' ? json.model : null);
+            }
 
             await onVideoGenerated({
                 mode,
@@ -120,20 +132,49 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
                 aspectRatio,
             });
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Unable to generate video right now.');
+            setError(err instanceof Error ? err.message : 'Unable to generate right now.');
         } finally {
             setIsGenerating(false);
         }
+    };
+
+    const handleGenerate = async (e: React.FormEvent) => {
+        e.preventDefault();
+        await runGeneration(outputEngine);
     };
 
     const suggestions = mode === 'image' ? IMAGE_SUGGESTIONS : TEXT_SUGGESTIONS;
 
     return (
         <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2.5 gap-2">
                 <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-purple-300">Gemini Video Studio</p>
-                    <p className="text-[10px] text-slate-400">Text-to-Video &amp; Photo Animation</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-purple-300">Scene &amp; Video Studio</p>
+                    <p className="text-[10px] text-slate-400">
+                        {outputEngine === 'storyboard' ? 'AI Storyboard • Unpaid Key' : 'MP4 Synthesis • Billed Key'}
+                    </p>
+                </div>
+                <div className="flex items-center rounded-lg bg-slate-950 border border-white/10 p-0.5">
+                    <button
+                        type="button"
+                        onClick={() => { setOutputEngine('storyboard'); setError(null); }}
+                        className={`px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-colors ${
+                            outputEngine === 'storyboard' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                        title="Runs on unpaid/free-tier Gemini 4 Hydrogen"
+                    >
+                        Storyboard
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { setOutputEngine('mp4'); setError(null); }}
+                        className={`px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-colors ${
+                            outputEngine === 'mp4' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                        title="MP4 Video Synthesis (requires billing on key)"
+                    >
+                        MP4
+                    </button>
                 </div>
             </div>
 
@@ -146,7 +187,7 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
                         mode === 'text' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}
                 >
-                    Text to Video
+                    Text Scene
                 </button>
                 <button
                     type="button"
@@ -155,7 +196,7 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
                         mode === 'image' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}
                 >
-                    Animate Photo
+                    From Photo
                 </button>
             </div>
 
@@ -199,7 +240,7 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
                                 className="w-full py-6 border border-dashed border-purple-500/40 rounded-2xl bg-purple-500/5 hover:bg-purple-500/10 transition-colors flex flex-col items-center gap-1.5 text-center"
                             >
                                 <span className="text-[11px] font-black uppercase tracking-wider text-purple-300">
-                                    Upload Photo to Animate
+                                    Upload Photo
                                 </span>
                                 <span className="text-[10px] text-slate-400">JPEG, PNG, or WebP up to 12MB</span>
                             </button>
@@ -251,21 +292,37 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
                 </div>
 
                 {error && (
-                    <div className="px-3 py-2 rounded-xl bg-red-950 border border-red-500/40 text-[11px] text-red-200">
-                        {error}
+                    <div className="px-3 py-2 rounded-xl bg-red-950 border border-red-500/40 text-[11px] text-red-200 space-y-2">
+                        <p>{error}</p>
+                        {outputEngine === 'mp4' && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setOutputEngine('storyboard');
+                                    void runGeneration('storyboard');
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-black uppercase tracking-wider"
+                            >
+                                Run Storyboard on Unpaid Key
+                            </button>
+                        )}
                     </div>
                 )}
 
                 <button
                     type="submit"
                     disabled={isGenerating}
-                    className="w-full py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:text-slate-400 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                    className={`w-full py-3 disabled:bg-slate-700 disabled:text-slate-400 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+                        outputEngine === 'storyboard' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-purple-600 hover:bg-purple-500'
+                    }`}
                 >
                     {isGenerating ? (
                         <>
                             <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            Generating Video...
+                            {outputEngine === 'storyboard' ? 'Directing Storyboard...' : 'Generating Video...'}
                         </>
+                    ) : outputEngine === 'storyboard' ? (
+                        'Generate Scene Storyboard'
                     ) : mode === 'image' ? (
                         'Animate Photo into Video'
                     ) : (
@@ -273,6 +330,20 @@ export const VideoStudioPanel: React.FC<VideoStudioPanelProps> = ({
                     )}
                 </button>
             </form>
+
+            {generatedStoryboard && (
+                <div className="space-y-2 pt-2 border-t border-white/10">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Director Storyboard</span>
+                        {generatedModel && (
+                            <span className="text-[9px] font-mono text-slate-400 truncate">{generatedModel}</span>
+                        )}
+                    </div>
+                    <div className="max-h-56 overflow-y-auto no-scrollbar rounded-2xl border border-white/10 bg-slate-950/90 p-3 text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
+                        {generatedStoryboard}
+                    </div>
+                </div>
+            )}
 
             {generatedVideoUrl && (
                 <div className="space-y-2 pt-2 border-t border-white/10">

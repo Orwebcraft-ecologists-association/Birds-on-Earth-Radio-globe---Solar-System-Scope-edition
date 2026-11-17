@@ -127,7 +127,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <div className="flex items-center justify-between gap-2 pb-3 border-b border-white/10">
                 <div className="min-w-0">
                     <p className="text-[10px] font-black uppercase tracking-widest text-blue-400">Gemini Field Assistant</p>
-                    <p className="text-[10px] text-slate-400 truncate">{activeRoleMeta.subtitle}</p>
+                    <p className="text-[10px] text-slate-400 truncate">{activeRoleMeta.subtitle} &bull; Free Key</p>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                     <div className="flex items-center rounded-lg bg-white/5 border border-white/10 p-0.5" title="Adjust chat window size">
