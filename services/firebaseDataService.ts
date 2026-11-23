@@ -11,7 +11,7 @@ import {
     where
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
-import type { RadioStation, StationSubmission, TreeSighting } from '../types';
+import type { RadioStation, StationSubmission, TreeSighting, VideoAspectRatio, VideoCreationRecord, VideoMode } from '../types';
 
 const ID_PATTERN = /^[a-zA-Z0-9_\-]+$/;
 const URL_PATTERN = /^https?:\/\/.+/;
@@ -329,4 +329,67 @@ export const subscribeTreeObservations = (
         unsubApproved();
         if (unsubOwn) unsubOwn();
     };
+};
+
+export const saveVideoCreationMetadata = async (
+    uid: string,
+    data: { mode: VideoMode; prompt: string; aspectRatio: VideoAspectRatio }
+): Promise<void> => {
+    const safeUid = sanitizeId(uid, 'user');
+    const creationId = sanitizeId(`vid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, 'vid');
+    const path = `users/${safeUid}/videoCreations/${creationId}`;
+
+    try {
+        await setDoc(doc(db, 'users', safeUid, 'videoCreations', creationId), {
+            creationId,
+            ownerId: safeUid,
+            mode: data.mode === 'image' ? 'image' : 'text',
+            prompt: clampStr(data.prompt, 1000, 'Cosmic Earth scene'),
+            aspectRatio: data.aspectRatio === '9:16' ? '9:16' : '16:9',
+            createdAt: serverTimestamp(),
+        });
+    } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, path);
+    }
+};
+
+export const subscribeUserVideoCreations = (
+    uid: string,
+    onUpdate: (items: VideoCreationRecord[]) => void
+): (() => void) => {
+    const safeUid = sanitizeId(uid, 'user');
+    const path = `users/${safeUid}/videoCreations`;
+    const q = query(collection(db, 'users', safeUid, 'videoCreations'), where('ownerId', '==', safeUid));
+
+    return onSnapshot(
+        q,
+        (snapshot) => {
+            const items: VideoCreationRecord[] = snapshot.docs.map((docSnap, idx) => {
+                const d = docSnap.data();
+                return {
+                    creationId: String(d.creationId || docSnap.id),
+                    mode: d.mode === 'image' ? 'image' : 'text',
+                    prompt: String(d.prompt || ''),
+                    aspectRatio: d.aspectRatio === '9:16' ? '9:16' : '16:9',
+                    createdAtMs: d.createdAt?.toMillis ? d.createdAt.toMillis() : Date.now() - idx,
+                };
+            });
+            items.sort((a, b) => b.createdAtMs - a.createdAtMs);
+            onUpdate(items);
+        },
+        (error) => {
+            handleFirestoreError(error, OperationType.LIST, path);
+        }
+    );
+};
+
+export const deleteVideoCreationMetadata = async (uid: string, creationId: string): Promise<void> => {
+    const safeUid = sanitizeId(uid, 'user');
+    const safeId = sanitizeId(creationId, 'vid');
+    const path = `users/${safeUid}/videoCreations/${safeId}`;
+    try {
+        await deleteDoc(doc(db, 'users', safeUid, 'videoCreations', safeId));
+    } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, path);
+    }
 };

@@ -127,7 +127,50 @@ export interface Filters {
 
 export type WeatherPreset = 'Calm' | 'Stormy' | 'Seasonal';
 
-export type ActiveTab = 'detections' | 'stations' | 'visuals' | 'favorites' | 'trees' | 'celestial' | 'inaturalist' | 'timescape';
+export type ActiveTab =
+    | 'detections'
+    | 'stations'
+    | 'visuals'
+    | 'favorites'
+    | 'trees'
+    | 'celestial'
+    | 'inaturalist'
+    | 'timescape'
+    | 'chat'
+    | 'voice'
+    | 'video';
+
+export type ChatRoleId = 'guide' | 'ornithologist' | 'astronomer' | 'radio-curator';
+
+export type ChatModelId = 'gemini-4-hydrogen' | 'gemini-3.1-flash-lite';
+
+export interface ChatMessage {
+    id: string;
+    role: 'user' | 'model';
+    text: string;
+    timestamp: number;
+    isError?: boolean;
+}
+
+export type VideoMode = 'text' | 'image';
+export type VideoAspectRatio = '16:9' | '9:16';
+
+export interface VideoCreationRecord {
+    creationId: string;
+    mode: VideoMode;
+    prompt: string;
+    aspectRatio: VideoAspectRatio;
+    createdAtMs: number;
+}
+
+export interface VoiceTranscriptEntry {
+    id: string;
+    speaker: 'user' | 'model';
+    text: string;
+    timestamp: number;
+}
+
+export type CameraViewPreset = 'earth' | 'solar' | 'satellite' | 'zenith';
 
 export interface SoundscapeBirdsong {
     name: string;

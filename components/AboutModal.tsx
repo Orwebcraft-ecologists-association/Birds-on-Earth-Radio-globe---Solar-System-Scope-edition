@@ -13,13 +13,13 @@ const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
 
     return (
         <div 
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fadeIn"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 animate-fadeIn"
             onClick={onClose}
             aria-modal="true"
             role="dialog"
         >
             <div 
-                className="bg-slate-900/80 backdrop-blur-lg border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] p-8 m-4 text-slate-200 shadow-2xl shadow-blue-500/10 overflow-y-auto"
+                className="bg-slate-950/96 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] p-8 m-4 text-slate-200 shadow-2xl shadow-blue-500/10 overflow-y-auto"
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex justify-between items-start border-b border-white/10 pb-4 mb-6">

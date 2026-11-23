@@ -122,6 +122,20 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidVideoCreation(data, userId, creationId) {
+      return data.keys().hasAll(['creationId', 'ownerId', 'mode', 'prompt', 'aspectRatio', 'createdAt'])
+        && data.keys().hasOnly(['creationId', 'ownerId', 'mode', 'prompt', 'aspectRatio', 'createdAt'])
+        && data.creationId == creationId
+        && isValidId(data.creationId)
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && isValidId(data.ownerId)
+        && data.mode in ['text', 'image']
+        && data.prompt is string && data.prompt.size() >= 1 && data.prompt.size() <= 1000
+        && data.aspectRatio in ['16:9', '9:16']
+        && data.createdAt is timestamp;
+    }
+
     // === Collection Rules ===
 
     // Private PII profile document: /users/{userId}/private/profile
@@ -156,6 +170,19 @@ service cloud.firestore {
         && incoming().createdAt == request.time;
       allow update: if false;
       allow delete: if isVerified() && isValidId(userId) && isValidId(stationId) && (isOwner(userId) || isAdmin());
+    }
+
+    // User Video Creation Metadata: /users/{userId}/videoCreations/{creationId}
+    match /users/{userId}/videoCreations/{creationId} {
+      allow get: if isVerified() && isValidId(userId) && isValidId(creationId) && (isOwner(userId) || isAdmin());
+      allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(creationId)
+        && isValidVideoCreation(incoming(), userId, creationId)
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isVerified() && isValidId(userId) && isValidId(creationId) && (isOwner(userId) || isAdmin());
     }
 
     // Submitted Radio Stations: /submittedStations/{stationId}

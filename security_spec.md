@@ -6,6 +6,7 @@
 3. **Submission Integrity**: Radio station submissions (`/submittedStations/{stationId}`) and tree observations (`/treeObservations/{observationId}`) must be created with `status == 'pending'`, `ownerId == request.auth.uid`, `createdAt == request.time`, `updatedAt == request.time`, and bounded string/coordinate values.
 4. **Immutable Ownership & Terminal Locking**: `ownerId`, `createdAt`, and entity IDs (`stationId`, `observationId`) cannot be changed on update. Non-admins cannot self-approve (`status` stays `'pending'`) and cannot modify documents once `status` reaches `'approved'` or `'rejected'`.
 5. **Query Security**: `list` rules explicitly filter on `resource.data` (`resource.data.ownerId == request.auth.uid` or `resource.data.status == 'approved'`) without calling `get()` or `exists()`.
+6. **Video Prompt History Metadata Isolation**: Per-user prompt history documents (`/users/{userId}/videoCreations/{creationId}`) store strictly bounded prompt metadata (`ownerId`, `mode`, `prompt <= 1000`, `aspectRatio`, `createdAt`), never binary image/video payloads, and are readable/creatable/deletable exclusively by the verified owner or admin.
 
 ## 2. The "Dirty Dozen" Payloads (Expected: PERMISSION_DENIED)
 1. **Unauthenticated Profile Read**: Read `/users/userA/private/profile` with `auth == null`.

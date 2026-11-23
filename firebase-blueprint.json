@@ -254,6 +254,49 @@
         }
       },
       "required": ["observationId", "ownerId", "common_name", "scientific_name", "imageUrl", "lat", "lon", "status", "createdAt", "updatedAt"]
+    },
+    "VideoCreation": {
+      "title": "VideoCreation",
+      "description": "Metadata record of an AI-generated celestial or nature video prompt (no binary payloads).",
+      "type": "object",
+      "properties": {
+        "creationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document ID of the video creation."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the user who generated this video."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["text", "image"],
+          "description": "Generation mode: text-to-video or image-to-video."
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Video generation prompt text."
+        },
+        "aspectRatio": {
+          "type": "string",
+          "enum": ["16:9", "9:16"],
+          "description": "Target aspect ratio of the generated video."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the video was generated."
+        }
+      },
+      "required": ["creationId", "ownerId", "mode", "prompt", "aspectRatio", "createdAt"]
     }
   },
   "firestore": {
@@ -264,6 +307,10 @@
     "/users/{userId}/favorites/{stationId}": {
       "schema": { "$ref": "#/entities/FavoriteStation" },
       "description": "Per-user bookmarked radio stations."
+    },
+    "/users/{userId}/videoCreations/{creationId}": {
+      "schema": { "$ref": "#/entities/VideoCreation" },
+      "description": "Per-user prompt history metadata for generated videos."
     },
     "/submittedStations/{stationId}": {
       "schema": { "$ref": "#/entities/SubmittedStation" },

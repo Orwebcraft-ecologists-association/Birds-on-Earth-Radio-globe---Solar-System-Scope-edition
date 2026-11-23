@@ -15,7 +15,7 @@ const PlanetSlider: React.FC<PlanetSliderProps> = ({ isVisible, onSelectTarget }
                 {planetsMetadata.map((planet) => (
                     <div 
                         key={planet.name}
-                        className="flex-shrink-0 w-72 bg-slate-900/80 backdrop-blur-xl border border-white/10 rounded-2xl p-5 shadow-2xl hover:border-white/20 transition-all group relative overflow-hidden"
+                        className="flex-shrink-0 w-72 bg-slate-950/92 border border-white/15 rounded-2xl p-5 shadow-2xl hover:border-white/25 transition-all group relative overflow-hidden"
                     >
                         {/* Decorative background glow */}
                         <div 
@@ -55,7 +55,7 @@ const PlanetSlider: React.FC<PlanetSliderProps> = ({ isVisible, onSelectTarget }
                 
                 {/* Special entry for Earth */}
                 <div 
-                    className="flex-shrink-0 w-72 bg-blue-900/40 backdrop-blur-xl border border-blue-400/30 rounded-2xl p-5 shadow-2xl hover:border-blue-400/50 transition-all group relative overflow-hidden"
+                    className="flex-shrink-0 w-72 bg-slate-950/92 border border-blue-400/35 rounded-2xl p-5 shadow-2xl hover:border-blue-400/50 transition-all group relative overflow-hidden"
                 >
                     <div className="absolute -top-10 -right-10 w-32 h-32 blur-3xl opacity-20 bg-blue-400"></div>
                     <div className="flex justify-between items-start mb-3">

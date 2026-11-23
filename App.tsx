@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { GoogleGenAI, Type } from "@google/genai";
 import { Globe } from './components/Globe';
 import { UI } from './components/UI';
 import { ExplorePanel } from './components/ExplorePanel';
@@ -11,14 +10,17 @@ import { allNamedStars } from './services/constellationData';
 import { useFirebaseAuth } from './components/FirebaseProvider';
 import {
     addFavoriteStationToFirestore,
+    deleteVideoCreationMetadata,
     removeFavoriteStationFromFirestore,
+    saveVideoCreationMetadata,
     submitStationToFirestore,
     submitTreeObservationToFirestore,
     subscribeSubmittedStations,
     subscribeTreeObservations,
-    subscribeUserFavorites
+    subscribeUserFavorites,
+    subscribeUserVideoCreations
 } from './services/firebaseDataService';
-import type { RadioStation, BirdSighting, TreeSighting, PointData, InfoPanelData, Filters, RadioPointData, BirdPointData, TreePointData, WeatherPreset, ActiveTab, StationSubmission, CelestialPointData, CelestialTarget, INaturalistObservation, INaturalistPointData, TimescapeConfig } from './types';
+import type { RadioStation, BirdSighting, TreeSighting, PointData, InfoPanelData, Filters, RadioPointData, BirdPointData, TreePointData, WeatherPreset, ActiveTab, StationSubmission, CelestialPointData, CelestialTarget, INaturalistObservation, INaturalistPointData, TimescapeConfig, ChatMessage, ChatModelId, ChatRoleId, CameraViewPreset, VideoCreationRecord, VideoMode, VideoAspectRatio } from './types';
 
 declare const Hls: any;
 
@@ -46,7 +48,7 @@ const CelestialDetailPanel: React.FC<{
     const isStar = data.type === 'celestial-star';
     
     return (
-        <div className="fixed top-24 left-5 w-[calc(100vw-2.5rem)] md:w-96 bg-slate-900/90 backdrop-blur-3xl rounded-3xl border border-white/20 shadow-[0_0_80px_rgba(0,0,0,0.6)] z-[70] animate-fadeIn overflow-hidden">
+        <div className="fixed top-24 left-5 w-[calc(100vw-2.5rem)] md:w-96 bg-slate-950/94 rounded-3xl border border-white/15 shadow-[0_0_80px_rgba(0,0,0,0.6)] z-[70] animate-fadeIn overflow-hidden">
             <div className="relative h-40 bg-gradient-to-br from-slate-800 to-black flex items-center justify-center border-b border-white/10">
                 <div className="absolute inset-0 opacity-25 pointer-events-none" style={{ background: `radial-gradient(circle at center, ${specColor}44 0%, transparent 75%)` }}></div>
                 <div className="w-20 h-20 rounded-full blur-[3px] shadow-[0_0_50px_rgba(255,255,255,0.4)] relative z-10" style={{ backgroundColor: specColor }}></div>
@@ -122,7 +124,7 @@ const CelestialDetailPanel: React.FC<{
 };
 
 const HoverCard: React.FC<{
-    data: RadioPointData | INaturalistPointData | TreePointData | CelestialPointData,
+    data: RadioPointData | BirdPointData | INaturalistPointData | TreePointData | CelestialPointData,
     position: { x: number, y: number },
     currentStation: RadioStation | null,
     isPlaying: boolean,
@@ -136,16 +138,37 @@ const HoverCard: React.FC<{
     isBroken: boolean,
 }> = ({ data, position, currentStation, isPlaying, isAudioLoading, volume, onVolumeChange, onToggleStation, isStationLocked, isFavorite, onToggleFavorite, isBroken }) => {
     
+    if (data.type === 'bird') {
+        const d = data as BirdPointData;
+        return (
+            <div className="absolute z-10 w-64 bg-slate-950/95 rounded-3xl p-5 pointer-events-none transition-all duration-300 animate-fadeIn shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-white/15" style={{ left: position.x, top: position.y, transform: 'translate(-50%, calc(-100% - 35px))' }}>
+                {d.imgUrl && <img src={d.imgUrl} alt={d.common} className="w-full h-36 object-cover rounded-2xl mb-4 bg-slate-900 shadow-inner" />}
+                <h4 className="font-black text-white text-lg leading-tight italic">{d.common}</h4>
+                <p className="text-xs text-blue-400 italic mb-3 font-bold tracking-tight">{d.scientific}</p>
+                <div className="flex items-center justify-between gap-2 pt-3 border-t border-white/10">
+                    <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full bg-rose-400"></div>
+                        <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">BirdNET {(d.score * 100).toFixed(0)}%</span>
+                    </div>
+                    <span className="text-[9px] uppercase font-black tracking-wider text-blue-400">Click for Wikipedia</span>
+                </div>
+            </div>
+        );
+    }
+
     if (data.type === 'inaturalist' || data.type === 'tree') {
         const d = data as INaturalistPointData | TreePointData;
         return (
-            <div className="absolute z-10 w-64 bg-slate-950/95 backdrop-blur-2xl rounded-3xl p-5 pointer-events-none transition-all duration-300 animate-fadeIn shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-white/20" style={{ left: position.x, top: position.y, transform: 'translate(-50%, calc(-100% - 35px))' }}>
+            <div className="absolute z-10 w-64 bg-slate-950/95 rounded-3xl p-5 pointer-events-none transition-all duration-300 animate-fadeIn shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-white/15" style={{ left: position.x, top: position.y, transform: 'translate(-50%, calc(-100% - 35px))' }}>
                 <img src={d.imageUrl} alt={d.common} className="w-full h-36 object-cover rounded-2xl mb-4 bg-slate-900 shadow-inner" />
                 <h4 className="font-black text-white text-lg leading-tight italic">{d.common}</h4>
                 <p className="text-xs text-blue-400 italic mb-4 font-bold tracking-tight">{d.scientific}</p>
-                <div className="flex items-center gap-2 pt-4 border-t border-white/10">
-                    <div className={`w-2.5 h-2.5 rounded-full animate-pulse ${data.type === 'inaturalist' ? 'bg-cyan-500' : 'bg-emerald-500'}`}></div>
-                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-500">{data.type === 'inaturalist' ? 'iNaturalist Global' : 'Local Flora'}</span>
+                <div className="flex items-center justify-between gap-2 pt-4 border-t border-white/10">
+                    <div className="flex items-center gap-2">
+                        <div className={`w-2.5 h-2.5 rounded-full ${data.type === 'inaturalist' ? 'bg-cyan-500' : 'bg-emerald-500'}`}></div>
+                        <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">{data.type === 'inaturalist' ? 'iNaturalist' : 'Local Flora'}</span>
+                    </div>
+                    <span className="text-[9px] uppercase font-black tracking-wider text-blue-400">Click for Wikipedia</span>
                 </div>
             </div>
         );
@@ -156,7 +179,7 @@ const HoverCard: React.FC<{
         const spectralColor = d.spectralType ? SPECTRAL_COLORS[d.spectralType[0]] || '#fff' : '#fff';
 
         return (
-            <div className="absolute z-10 w-72 bg-slate-950/95 backdrop-blur-3xl rounded-3xl p-6 pointer-events-none transition-all duration-300 animate-fadeIn shadow-[0_0_60px_rgba(0,0,0,0.7)] border border-white/20" style={{ left: position.x, top: position.y, transform: 'translate(-50%, calc(-100% - 35px))' }}>
+            <div className="absolute z-10 w-72 bg-slate-950/95 rounded-3xl p-6 pointer-events-none transition-all duration-300 animate-fadeIn shadow-[0_0_60px_rgba(0,0,0,0.7)] border border-white/15" style={{ left: position.x, top: position.y, transform: 'translate(-50%, calc(-100% - 35px))' }}>
                 <div className="flex items-center justify-between mb-3">
                     <h4 className="font-black text-white text-2xl tracking-tighter italic">{d.name}</h4>
                     {d.type === 'celestial-star' ? (
@@ -169,7 +192,7 @@ const HoverCard: React.FC<{
                 
                 {d.spectralType && (
                     <div className="flex items-center gap-2 mb-3">
-                        <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Spectral Class:</span>
+                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Spectral Class:</span>
                         <span className="text-[10px] font-black px-2 py-0.5 rounded bg-white/5 border border-white/10" style={{ color: spectralColor }}>{d.spectralType}</span>
                     </div>
                 )}
@@ -177,8 +200,8 @@ const HoverCard: React.FC<{
                 <p className="text-xs text-slate-400 leading-relaxed font-medium italic">{d.info || "A distant celestial body monitored by our astrometric arrays."}</p>
                 
                 <div className="flex items-center gap-2 pt-4 mt-4 border-t border-white/10">
-                    <div className={`w-2 h-2 rounded-full animate-pulse`} style={{ backgroundColor: spectralColor }}></div>
-                    <span className={`text-[9px] uppercase font-black tracking-widest text-slate-600`}>
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: spectralColor }}></div>
+                    <span className="text-[9px] uppercase font-black tracking-widest text-slate-400">
                         Astrometric Index Point
                     </span>
                 </div>
@@ -191,7 +214,7 @@ const HoverCard: React.FC<{
         const isThisStationPlaying = currentStation?.stationuuid === d.id;
         
         return (
-            <div className="absolute z-10 w-64 bg-slate-950/95 backdrop-blur-2xl rounded-3xl p-5 pointer-events-none transition-opacity duration-300 animate-fadeIn shadow-2xl border border-white/20" style={{ left: position.x, top: position.y, transform: 'translate(-50%, calc(-100% - 20px))' }}>
+            <div className="absolute z-10 w-64 bg-slate-950/95 rounded-3xl p-5 pointer-events-none transition-opacity duration-300 animate-fadeIn shadow-2xl border border-white/15" style={{ left: position.x, top: position.y, transform: 'translate(-50%, calc(-100% - 20px))' }}>
                 <div className="flex justify-between items-start gap-3">
                     <div className="flex-1 overflow-hidden">
                         <h4 className="font-black truncate text-white italic text-lg tracking-tight" title={d.title}>{d.title}</h4>
@@ -277,21 +300,33 @@ const App: React.FC = () => {
     const [volume, setVolume] = useState(0.8);
     const [isStationLocked, setIsStationLocked] = useState(false);
     const [activeTab, setActiveTab] = useState<ActiveTab>('detections');
+    const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+    const [chatRole, setChatRole] = useState<ChatRoleId>('guide');
+    const [chatModel, setChatModel] = useState<ChatModelId>('gemini-4-hydrogen');
+    const [isChatStreaming, setIsChatStreaming] = useState(false);
+    const [chatError, setChatError] = useState<string | null>(null);
+    const [cameraViewPreset, setCameraViewPreset] = useState<CameraViewPreset>('earth');
+    const [videoHistory, setVideoHistory] = useState<VideoCreationRecord[]>([]);
+    const chatAbortRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
         if (!authReady) return;
         const unsubStations = subscribeSubmittedStations(user?.uid || null, setSubmittedStations);
         const unsubTrees = subscribeTreeObservations(user?.uid || null, setFirestoreTrees);
         let unsubFavorites: (() => void) | null = null;
+        let unsubVideos: (() => void) | null = null;
         if (user) {
             unsubFavorites = subscribeUserFavorites(user.uid, setFavoriteStations);
+            unsubVideos = subscribeUserVideoCreations(user.uid, setVideoHistory);
         } else {
             setFavoriteStations([]);
+            setVideoHistory([]);
         }
         return () => {
             unsubStations();
             unsubTrees();
             if (unsubFavorites) unsubFavorites();
+            if (unsubVideos) unsubVideos();
         };
     }, [authReady, user]);
 
@@ -353,7 +388,7 @@ const App: React.FC = () => {
         setCelestialFlyToTarget(t);
         if (t.type === 'star') {
             const s = allNamedStars.find(x => x.name === t.name);
-            if (s) setPinnedData({ type: 'celestial-star', ...s } as CelestialPointData);
+            if (s) setPinnedData({ type: 'celestial-star', ...s, magnitude: s.mag } as CelestialPointData);
         } else if (t.type === 'planet') {
              setPinnedData({ type: 'planet', name: t.name } as CelestialPointData);
         }
@@ -605,6 +640,153 @@ const App: React.FC = () => {
         }
     }, [volume]);
 
+    const buildChatContext = useCallback(() => {
+        const parts: string[] = [];
+        parts.push(`Active view tab: ${activeTab}`);
+        if (currentStation) {
+            parts.push(`Currently tuned radio station: ${currentStation.name} (${currentStation.state ? `${currentStation.state}, ` : ''}${currentStation.country}, tags: ${currentStation.tags || 'general'}, ${isPlaying ? 'playing' : 'paused'})`);
+        }
+        if (pinnedData) {
+            if (pinnedData.type === 'bird') {
+                parts.push(`Selected bird detection: ${pinnedData.common} (${pinnedData.scientific}), confidence ${(pinnedData.score * 100).toFixed(0)}%`);
+            } else if (pinnedData.type === 'tree' || pinnedData.type === 'inaturalist') {
+                parts.push(`Selected flora/species observation: ${pinnedData.common} (${pinnedData.scientific})`);
+            } else if (pinnedData.type === 'celestial-star' || pinnedData.type === 'planet' || pinnedData.type === 'sun' || pinnedData.type === 'moon') {
+                parts.push(`Selected celestial body: ${pinnedData.name}${pinnedData.constellation ? ` in ${pinnedData.constellation}` : ''}${pinnedData.spectralType ? `, spectral ${pinnedData.spectralType}` : ''}`);
+            }
+        }
+        return parts.join('\n');
+    }, [activeTab, currentStation, isPlaying, pinnedData]);
+
+    const handleSendChatMessage = useCallback(async (text: string) => {
+        const trimmed = text.trim();
+        if (!trimmed || isChatStreaming) return;
+
+        setChatError(null);
+        const now = Date.now();
+        const userMsg: ChatMessage = { id: `u-${now}`, role: 'user', text: trimmed, timestamp: now };
+        const assistantId = `m-${now + 1}`;
+        const assistantMsg: ChatMessage = { id: assistantId, role: 'model', text: '', timestamp: now + 1 };
+
+        const historySnapshot = chatMessages
+            .filter(m => !m.isError && m.text.trim().length > 0)
+            .map(m => ({ role: m.role, text: m.text }));
+
+        setChatMessages(prev => [...prev, userMsg, assistantMsg]);
+        setIsChatStreaming(true);
+
+        const controller = new AbortController();
+        chatAbortRef.current = controller;
+
+        try {
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
+                body: JSON.stringify({
+                    message: trimmed,
+                    history: historySnapshot,
+                    role: chatRole,
+                    model: chatModel,
+                    context: buildChatContext(),
+                }),
+            });
+
+            if (!response.ok || !response.body) {
+                let errMsg = `Request failed (${response.status})`;
+                try {
+                    const errJson = await response.json();
+                    if (errJson?.error) errMsg = errJson.error;
+                } catch {
+                    // keep fallback error message
+                }
+                throw new Error(errMsg);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let accumulated = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                const events = buffer.split('\n\n');
+                buffer = events.pop() || '';
+
+                for (const event of events) {
+                    const lines = event.split('\n');
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const payloadStr = line.slice(6).trim();
+                        if (!payloadStr) continue;
+                        let parsed: { text?: string; error?: string; done?: boolean } | null = null;
+                        try {
+                            parsed = JSON.parse(payloadStr);
+                        } catch {
+                            continue;
+                        }
+                        if (parsed?.error) {
+                            throw new Error(parsed.error);
+                        }
+                        if (parsed?.text) {
+                            accumulated += parsed.text;
+                            setChatMessages(prev =>
+                                prev.map(m => (m.id === assistantId ? { ...m, text: accumulated } : m))
+                            );
+                        }
+                    }
+                }
+            }
+
+            if (!accumulated.trim()) {
+                setChatMessages(prev =>
+                    prev.map(m =>
+                        m.id === assistantId
+                            ? { ...m, text: 'No response was returned. Please try again.', isError: true }
+                            : m
+                    )
+                );
+            }
+        } catch (err) {
+            if ((err as Error)?.name === 'AbortError') return;
+            const message = err instanceof Error ? err.message : 'Unable to reach Gemini right now.';
+            setChatError(message);
+            setChatMessages(prev =>
+                prev.map(m => (m.id === assistantId && !m.text ? { ...m, text: message, isError: true } : m))
+            );
+        } finally {
+            setIsChatStreaming(false);
+            if (chatAbortRef.current === controller) {
+                chatAbortRef.current = null;
+            }
+        }
+    }, [isChatStreaming, chatMessages, chatRole, chatModel, buildChatContext]);
+
+    const handleClearChat = useCallback(() => {
+        if (chatAbortRef.current) {
+            chatAbortRef.current.abort();
+            chatAbortRef.current = null;
+        }
+        setChatMessages([]);
+        setChatError(null);
+        setIsChatStreaming(false);
+    }, []);
+
+    const handleVideoGenerated = useCallback(async (record: { mode: VideoMode; prompt: string; aspectRatio: VideoAspectRatio }) => {
+        if (user?.uid) {
+            await saveVideoCreationMetadata(user.uid, record);
+        }
+    }, [user]);
+
+    const handleDeleteVideoHistoryItem = useCallback((creationId: string) => {
+        if (user?.uid) {
+            void deleteVideoCreationMetadata(user.uid, creationId);
+        }
+    }, [user]);
+
     return (
         <div className="relative w-full h-full text-white antialiased bg-black overflow-hidden font-sans">
             <audio
@@ -624,6 +806,7 @@ const App: React.FC = () => {
                 onHover={(d, p) => { setHoverData(d); setHoverPosition(p || null); }}
                 onExpiredBirdIds={(ids) => setBirdSightings(prev => prev.filter(s => !ids.includes(s.id)))}
                 onStationClick={(d) => { setPinnedData(d); handleStationClick(d); }}
+                onPointClick={(d) => { setPinnedData(d); }}
                 currentStation={currentStation}
                 isSoundscapeMode={false}
                 weatherPreset={weatherPreset}
@@ -632,6 +815,7 @@ const App: React.FC = () => {
                 starRotationSpeed={starRotationSpeed}
                 flyToTarget={flyToTarget}
                 celestialFlyToTarget={celestialFlyToTarget}
+                cameraViewPreset={cameraViewPreset}
                 brokenStationIds={brokenStationIds}
                 onGlobeBackgroundClick={() => setIsUiVisible(v => !v)}
                 isLocationPickerMode={isLocationPickerMode}
@@ -656,6 +840,8 @@ const App: React.FC = () => {
             )}
             <UI
                 statusMessage={statusMessage} totalSubmissions={totalSubmissions} latestSubmission={latestSubmission} sidebarSightings={sidebarSightings} treeSightings={treeSightings} inatObservations={inatObservations} pinnedData={pinnedData} onCloseInfoPanel={() => setPinnedData(null)} filters={filters} uniqueBirdSpecies={uniqueBirdSpecies} uniqueRadioStations={allStations} filteredRadioStationsForSearch={filteredRadioStationsForSearch} uniqueCountries={[]} uniqueGenres={[]} liveBirdCount={birdSightings.length} onShowLocation={() => {}} userLocation={userLocation} onAttractBirds={() => {}} isAttracting={false} currentStation={currentStation} isPlaying={isPlaying} isAudioLoading={isAudioLoading} volume={volume} onPlayPause={handlePlayPause} onVolumeChange={(v) => { setVolume(v); if(audioRef.current) audioRef.current.volume = v; }} audioError={audioError} audioContextRef={{current: null}} audioAnalyserRef={{current: null}} isStationLocked={isStationLocked} onToggleLock={() => setIsStationLocked(!isStationLocked)} isAboutModalOpen={isAboutModalOpen} onOpenAboutModal={() => setIsAboutModalOpen(true)} onCloseAboutModal={() => setIsAboutModalOpen(false)} isSoundscapeMode={false} onToggleSoundscapeMode={() => {}} weatherPreset={weatherPreset} onWeatherPresetChange={setWeatherPreset} sunIntensity={sunIntensity} onSunIntensityChange={setSunIntensity} sunOrbitSpeed={sunOrbitSpeed} onSunOrbitSpeedChange={setSunOrbitSpeed} starRotationSpeed={starRotationSpeed} onStarRotationSpeedChange={setStarRotationSpeed} isUiVisible={isUiVisible} onToggleUIVisibility={() => setIsUiVisible(v => !v)} onToggleExplorePanel={() => setIsExplorePanelOpen(!isExplorePanelOpen)} queue={[]} onRemoveFromQueue={() => {}} onSelectAndPlayStation={(id) => { const s = allStations.find(st => st.stationuuid === id); if (s) { handleStationClick({ id: s.stationuuid, lat: s.geo_lat, lon: s.geo_long, type: 'radio', title: s.name, place: s.state || s.country, url: s.url_resolved, country: s.country, state: s.state, tags: s.tags }); setFlyToTarget({ lat: s.geo_lat, lon: s.geo_long }); } }} onSelectAndFindBird={(n) => {}} onFlyToLocation={(lat, lon) => setFlyToTarget({lat, lon})} onSelectCelestialTarget={handleSelectCelestialTarget} favoriteStations={favoriteStations} onToggleFavorite={handleToggleFavorite} onRadioTextChange={t => setFilters(f => ({ ...f, radio: { ...f.radio, text: t } }))} onRadioCountryChange={() => {}} onRadioGenreChange={() => {}} onBirdNameChange={() => {}} onBirdSelect={() => {}} activeTab={activeTab} onActiveTabChange={setActiveTab} brokenStationIds={brokenStationIds} onOpenSubmissionModal={() => setIsSubmissionModalOpen(true)} isSubmissionModalOpen={isSubmissionModalOpen} onCloseSubmissionModal={() => setIsSubmissionModalOpen(false)} onStationSubmit={() => {}} newStationData={newStationData} setNewStationData={setNewStationData} onSetPickerMode={() => { setIsSubmissionModalOpen(false); setIsLocationPickerMode(true); }} onOpenTreeSubmissionModal={() => setIsTreeSubmissionModalOpen(true)} timescape={timescape} onTimescapeChange={setTimescape}
+                chatMessages={chatMessages} chatRole={chatRole} chatModel={chatModel} isChatStreaming={isChatStreaming} chatError={chatError} viewerContext={buildChatContext()} onChatRoleChange={setChatRole} onChatModelChange={setChatModel} onSendChatMessage={handleSendChatMessage} onClearChat={handleClearChat} onDismissChatError={() => setChatError(null)}
+                cameraViewPreset={cameraViewPreset} onCameraViewPresetChange={setCameraViewPreset} videoHistory={videoHistory} onVideoGenerated={handleVideoGenerated} onDeleteVideoHistoryItem={handleDeleteVideoHistoryItem} onSelectSpeciesPoint={(pt) => setPinnedData(pt)}
             />
             <TreeSubmissionModal isOpen={isTreeSubmissionModalOpen && !isTreeLocationPickerMode} onClose={() => setIsTreeSubmissionModalOpen(false)} onSubmit={handleTreeSubmit} onSetPickerMode={() => { setIsTreeSubmissionModalOpen(false); setIsTreeLocationPickerMode(true); }} isIdentifying={isIdentifyingTree} location={newTreeLocation} />
             <SubmissionModal isOpen={isSubmissionModalOpen && !isLocationPickerMode} onClose={() => setIsSubmissionModalOpen(false)} onSubmit={handleStationSubmit} newStationData={newStationData} setNewStationData={setNewStationData} onSetPickerMode={() => { setIsSubmissionModalOpen(false); setIsLocationPickerMode(true); }} />
@@ -669,7 +855,7 @@ const App: React.FC = () => {
                 />
             )}
 
-            {hoverData && hoverPosition && (hoverData.type === 'radio' || hoverData.type === 'inaturalist' || hoverData.type === 'tree' || hoverData.type === 'planet' || hoverData.type === 'celestial-star' || hoverData.type === 'sun' || hoverData.type === 'moon') && (
+            {hoverData && hoverPosition && (hoverData.type === 'radio' || hoverData.type === 'bird' || hoverData.type === 'inaturalist' || hoverData.type === 'tree' || hoverData.type === 'planet' || hoverData.type === 'celestial-star' || hoverData.type === 'sun' || hoverData.type === 'moon') && (
                 <HoverCard data={hoverData as any} position={hoverPosition} currentStation={currentStation} isPlaying={isPlaying} isAudioLoading={isAudioLoading} volume={volume} onVolumeChange={(v) => { setVolume(v); if(audioRef.current) audioRef.current.volume = v; }} onToggleStation={handleStationClick} isStationLocked={isStationLocked} isFavorite={hoverData.type === 'radio' ? favoriteStations.some(s => s.stationuuid === hoverData.id) : false} onToggleFavorite={handleToggleFavorite} isBroken={hoverData.type === 'radio' && brokenStationIds.has(hoverData.id as string)} />
             )}
         </div>
