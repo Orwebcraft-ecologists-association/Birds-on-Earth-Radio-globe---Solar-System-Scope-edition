@@ -50,3 +50,13 @@ To create a signed upload bundle after the workflow reaches the default branch, 
 From the default branch, run **Actions → Build Android App Bundle (TWA) → Run workflow**. The signing job uses a temporary keystore and provides the `birds-on-earth-radio-play-aab` artifact. Keep the original upload keystore and its recovery information outside source control. The workflow produces artifacts in GitHub Actions. Play Console upload and release are separate manual steps that require approval.
 
 [Bubblewrap guide](https://github.com/GoogleChromeLabs/bubblewrap/tree/main/packages/cli) · [Digital Asset Links for TWAs](https://developer.chrome.com/docs/android/trusted-web-activity/android-for-web-devs) · [Google Play target API requirements](https://support.google.com/googleplay/android-developer/answer/11926878)
+
+## Upload a test-signed bundle through Internal app sharing
+
+When both build jobs pass, the workflow generates a temporary RSA test certificate, signs the AAB, checks the signature and deletes the temporary keystore. Download the `birds-on-earth-radio-internal-sharing-aab` artifact from the successful run and extract `birds-on-earth-radio-internal-sharing.aab`.
+
+Sign in to the [Internal app sharing upload page](https://play.google.com/console/internal-app-sharing/), select the AAB and confirm the upload. Internal app sharing accepts a test signing key and re-signs the artifact with Google's Internal App Sharing certificate. Use the protected upload key for releases on the Internal testing, Closed testing or production tracks.
+
+For an inactivity notice, also verify the account contact email and phone number in Play Console and save. Check Policy status after completing both tasks. Follow the notice's deadline and contact Play support if the warning remains.
+
+[Google's inactive account guidance](https://support.google.com/googleplay/android-developer/answer/11605267) · [Internal app sharing requirements](https://support.google.com/googleplay/android-developer/answer/9844679)

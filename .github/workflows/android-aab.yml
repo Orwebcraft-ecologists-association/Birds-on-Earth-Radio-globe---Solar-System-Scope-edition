@@ -73,6 +73,47 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  test-sign:
+    name: Sign AAB for Internal app sharing
+    needs: [web, bundle]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/download-artifact@v4
+        with:
+          name: birds-on-earth-radio-unsigned-aab
+      - name: Generate a temporary test key and sign the bundle
+        shell: bash
+        run: |
+          key_directory="$(mktemp -d "$RUNNER_TEMP/test-signing.XXXXXXXX")"
+          trap 'rm -rf "$key_directory"' EXIT
+          export TEST_KEY_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$TEST_KEY_PASSWORD"
+          keytool -genkeypair -noprompt \
+            -keystore "$key_directory/test-key.p12" -storetype PKCS12 \
+            -storepass:env TEST_KEY_PASSWORD -keypass:env TEST_KEY_PASSWORD \
+            -alias internal-sharing-test -keyalg RSA -keysize 2048 -validity 365 \
+            -dname "CN=Birds on Earth Radio Internal Sharing Test"
+          jarsigner -keystore "$key_directory/test-key.p12" -storetype PKCS12 \
+            -storepass:env TEST_KEY_PASSWORD -keypass:env TEST_KEY_PASSWORD \
+            -signedjar birds-on-earth-radio-internal-sharing.aab \
+            app-release.aab internal-sharing-test
+          jarsigner -verify -verbose -certs birds-on-earth-radio-internal-sharing.aab > verification.txt
+          grep -F 'jar verified.' verification.txt
+          keytool -printcert -jarfile birds-on-earth-radio-internal-sharing.aab
+          printf '%s\n' 'Download birds-on-earth-radio-internal-sharing-aab for Google Play Internal app sharing.' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' 'This bundle uses a temporary test certificate. The keystore is deleted at the end of the signing step.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: birds-on-earth-radio-internal-sharing-aab
+          path: birds-on-earth-radio-internal-sharing.aab
+          if-no-files-found: error
+          retention-days: 7
+
   sign:
     name: Sign the AAB with the Play upload key
     if: github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch
