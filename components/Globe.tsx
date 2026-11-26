@@ -468,7 +468,7 @@ const Fallback2DGlobe: React.FC<{
                     rotRef.current.zoom = Math.max(0.55, Math.min(2.4, rotRef.current.zoom * (e.deltaY > 0 ? 0.92 : 1.08)));
                 }}
             />
-            <div className="fixed top-20 right-5 z-[60] px-3 py-1.5 rounded-xl bg-slate-900 border border-amber-500/40 text-[10px] font-bold text-amber-200 flex items-center gap-2 pointer-events-auto">
+            <div className="fixed top-24 left-5 z-[75] max-w-[calc(100vw-2.5rem)] px-3.5 py-2 rounded-xl bg-slate-950/95 border border-amber-500/40 text-[10px] font-bold text-amber-200 flex flex-wrap items-center gap-2.5 shadow-2xl pointer-events-auto">
                 <span>
                     {webglReason === 'lost'
                         ? 'WebGL context paused • 2D Projection active'
@@ -477,7 +477,7 @@ const Fallback2DGlobe: React.FC<{
                 <button
                     type="button"
                     onClick={() => window.location.reload()}
-                    className="px-2 py-0.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/35 text-amber-100 uppercase text-[9px] font-black"
+                    className="px-2.5 py-1 rounded-lg bg-amber-500/25 hover:bg-amber-500/45 text-amber-100 uppercase text-[9px] font-black cursor-pointer transition-colors"
                 >
                     Restore 3D
                 </button>

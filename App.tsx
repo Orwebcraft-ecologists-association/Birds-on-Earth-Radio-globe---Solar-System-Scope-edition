@@ -280,6 +280,20 @@ const App: React.FC = () => {
     const hlsRef = useRef<any>(null);
     const candidatesRef = useRef<string[]>([]);
     const candidateIdxRef = useRef<number>(0);
+    const playbackSessionRef = useRef<number>(0);
+    const hasCalledResolveRef = useRef<boolean>(false);
+    const stallTimeoutRef = useRef<number | null>(null);
+    const activeRelayNameRef = useRef<string | null>(null);
+    const volumeRef = useRef<number>(0.8);
+    const healedUrlsRef = useRef<Record<string, string>>((() => {
+        if (typeof window === 'undefined') return {};
+        try {
+            const raw = window.sessionStorage.getItem('healed_radio_urls_v1');
+            return raw ? JSON.parse(raw) : {};
+        } catch {
+            return {};
+        }
+    })());
     const [playbackTrigger, setPlaybackTrigger] = useState(0);
     const [favoriteStations, setFavoriteStations] = useState<RadioStation[]>([]);
 
@@ -479,8 +493,42 @@ const App: React.FC = () => {
         };
     }, [handleNewSighting, handleNewTreeSighting]);
 
+    const clearStallWatchdog = useCallback(() => {
+        if (stallTimeoutRef.current !== null) {
+            window.clearTimeout(stallTimeoutRef.current);
+            stallTimeoutRef.current = null;
+        }
+    }, []);
+
+    const persistHealedUrl = useCallback((stationId: string, healedUrl: string) => {
+        healedUrlsRef.current[stationId] = healedUrl;
+        if (typeof window !== 'undefined') {
+            try {
+                window.sessionStorage.setItem('healed_radio_urls_v1', JSON.stringify(healedUrlsRef.current));
+            } catch {
+                // ignore storage quota errors
+            }
+        }
+    }, []);
+
+    const isHlsStreamUrl = useCallback((url: string): boolean => {
+        let target = url;
+        if (url.startsWith('/api/radio/proxy?url=')) {
+            try {
+                target = decodeURIComponent(url.slice('/api/radio/proxy?url='.length));
+            } catch {
+                target = url;
+            }
+        }
+        const lower = target.toLowerCase();
+        return /\.m3u8(\?|$)/i.test(lower) || lower.includes('/playlist.m3u8') || lower.includes('.m3u8');
+    }, []);
+
     const getPlayableCandidates = useCallback((station: RadioStation): string[] => {
-        const rawUrls = [station.url_resolved, ...(station.fallback_urls || [])].filter(Boolean);
+        const cachedHeal = healedUrlsRef.current[station.stationuuid];
+        const rawUrls = [cachedHeal, station.url_resolved, ...(station.fallback_urls || [])].filter(
+            (u): u is string => typeof u === 'string' && u.trim().length > 0
+        );
         const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:';
         const result: string[] = [];
         const addUnique = (u: string) => {
@@ -489,93 +537,253 @@ const App: React.FC = () => {
 
         for (const raw of rawUrls) {
             const trimmed = raw.trim();
+            if (trimmed.startsWith('/api/radio/proxy?')) {
+                addUnique(trimmed);
+                continue;
+            }
+            const cleanPath = trimmed.split('?')[0].toLowerCase();
+            // Skip playlist wrappers, Flash FLV, and RTMP from direct <audio>; server resolver handles them
+            if (
+                cleanPath.endsWith('.pls') ||
+                cleanPath.endsWith('.m3u') ||
+                cleanPath.endsWith('.xspf') ||
+                cleanPath.endsWith('.asx') ||
+                cleanPath.endsWith('.flv') ||
+                trimmed.toLowerCase().startsWith('rtmp')
+            ) {
+                continue;
+            }
+            if (trimmed.includes('stream.radioparadise.com/flacm')) {
+                addUnique('https://stream.radioparadise.com/aac-320');
+                addUnique('https://stream.radioparadise.com/mp3-192');
+            }
             if (isHttpsPage && trimmed.startsWith('http://')) {
                 addUnique('https://' + trimmed.slice('http://'.length));
+                continue;
             }
             addUnique(trimmed);
         }
         return result;
     }, []);
 
-    const loadStreamCandidate = useCallback((url: string, stationId: string) => {
-        const audio = audioRef.current;
-        if (!audio) return;
+    const loadStreamCandidateRef = useRef<(url: string, station: RadioStation, sessionId: number) => void>(() => {});
 
-        if (hlsRef.current) {
-            hlsRef.current.destroy();
-            hlsRef.current = null;
-        }
+    const resolveAndHealStation = useCallback(
+        async (station: RadioStation, sessionId: number, forceRefresh = false) => {
+            if (playbackSessionRef.current !== sessionId) return;
+            clearStallWatchdog();
+            hasCalledResolveRef.current = true;
+            setIsAudioLoading(true);
+            setAudioError(null);
+            setStatusMessage(`Healing stream for ${station.name}...`);
 
-        const isHls = /\.m3u8(\?|$)/i.test(url) || url.toLowerCase().includes('/playlist.m3u8');
-
-        if (isHls && typeof Hls !== 'undefined' && Hls.isSupported()) {
-            audio.removeAttribute('src');
-            const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-            hlsRef.current = hls;
-            hls.loadSource(url);
-            hls.attachMedia(audio);
-            hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                audio.volume = volume;
-                audio.play().catch(() => {
-                    // Wait for user interaction or fallback via error handler if needed
+            try {
+                const candidateUrls = [station.url_resolved, ...(station.fallback_urls || [])].filter(
+                    (u): u is string => typeof u === 'string' && u.trim().length > 0
+                );
+                const res = await fetch('/api/radio/resolve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        stationuuid: station.stationuuid,
+                        name: station.name,
+                        country: station.country,
+                        candidateUrls,
+                        forceRefresh,
+                    }),
                 });
-            });
-            hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
-                if (data?.fatal) {
-                    hls.destroy();
-                    if (hlsRef.current === hls) hlsRef.current = null;
-                    const nextIdx = candidateIdxRef.current + 1;
-                    if (nextIdx < candidatesRef.current.length) {
-                        candidateIdxRef.current = nextIdx;
-                        loadStreamCandidate(candidatesRef.current[nextIdx], stationId);
-                    } else {
-                        setBrokenStationIds(prev => new Set(prev).add(stationId));
-                        setAudioError('Stream unavailable');
-                        setIsPlaying(false);
-                        setIsAudioLoading(false);
+
+                if (playbackSessionRef.current !== sessionId) return;
+                if (!res.ok) throw new Error(`Resolve failed (${res.status})`);
+
+                const data = (await res.json()) as {
+                    candidates?: string[];
+                    repairedUrl?: string | null;
+                    source?: 'direct' | 'proxy' | 'repaired' | 'relay' | 'none';
+                    relayName?: string;
+                };
+
+                if (playbackSessionRef.current !== sessionId) return;
+
+                const healedCandidates = Array.isArray(data.candidates) ? data.candidates.filter(Boolean) : [];
+                if (healedCandidates.length > 0) {
+                    if (data.repairedUrl && data.source !== 'relay') {
+                        persistHealedUrl(station.stationuuid, data.repairedUrl);
                     }
+                    if (data.source === 'relay' && data.relayName) {
+                        activeRelayNameRef.current = data.relayName;
+                    } else {
+                        activeRelayNameRef.current = null;
+                    }
+                    setBrokenStationIds((prev) => {
+                        if (!prev.has(station.stationuuid)) return prev;
+                        const next = new Set(prev);
+                        next.delete(station.stationuuid);
+                        return next;
+                    });
+                    candidatesRef.current = healedCandidates;
+                    candidateIdxRef.current = 0;
+                    loadStreamCandidateRef.current(healedCandidates[0], station, sessionId);
+                    return;
                 }
-            });
-        } else {
-            audio.src = url;
-            audio.volume = volume;
-            audio.load();
-            audio.play().catch((err) => {
-                // Ignore AbortError caused by rapid station switching
-                if (err?.name === 'AbortError') return;
-            });
-        }
-    }, [volume]);
+            } catch {
+                // Fall through to terminal offline handling only after autonomous healing exhausted
+            }
+
+            if (playbackSessionRef.current !== sessionId) return;
+            clearStallWatchdog();
+            setBrokenStationIds((prev) => new Set(prev).add(station.stationuuid));
+            setAudioError('Stream offline — tap Play to retry');
+            setIsPlaying(false);
+            setIsAudioLoading(false);
+            setStatusMessage(`${station.name} stream offline`);
+        },
+        [clearStallWatchdog, persistHealedUrl]
+    );
+
+    const advanceOrHealStation = useCallback(
+        (station: RadioStation, sessionId: number) => {
+            if (playbackSessionRef.current !== sessionId) return;
+            clearStallWatchdog();
+            const nextIdx = candidateIdxRef.current + 1;
+            if (nextIdx < candidatesRef.current.length) {
+                candidateIdxRef.current = nextIdx;
+                loadStreamCandidateRef.current(candidatesRef.current[nextIdx], station, sessionId);
+                return;
+            }
+            if (!hasCalledResolveRef.current) {
+                const usedCachedHeal = Boolean(healedUrlsRef.current[station.stationuuid]);
+                if (usedCachedHeal) {
+                    delete healedUrlsRef.current[station.stationuuid];
+                }
+                void resolveAndHealStation(station, sessionId, usedCachedHeal);
+                return;
+            }
+            setBrokenStationIds((prev) => new Set(prev).add(station.stationuuid));
+            setAudioError('Stream offline — tap Play to retry');
+            setIsPlaying(false);
+            setIsAudioLoading(false);
+            setStatusMessage(`${station.name} stream offline`);
+        },
+        [clearStallWatchdog, resolveAndHealStation]
+    );
+
+    const loadStreamCandidate = useCallback(
+        (url: string, station: RadioStation, sessionId: number) => {
+            const audio = audioRef.current;
+            if (!audio || playbackSessionRef.current !== sessionId) return;
+
+            clearStallWatchdog();
+            if (hlsRef.current) {
+                hlsRef.current.destroy();
+                hlsRef.current = null;
+            }
+
+            setIsAudioLoading(true);
+            setAudioError(null);
+
+            stallTimeoutRef.current = window.setTimeout(() => {
+                if (playbackSessionRef.current !== sessionId) return;
+                if (hlsRef.current) {
+                    hlsRef.current.destroy();
+                    hlsRef.current = null;
+                }
+                advanceOrHealStation(station, sessionId);
+            }, 7500);
+
+            const isHls = isHlsStreamUrl(url);
+
+            if (isHls && typeof Hls !== 'undefined' && Hls.isSupported()) {
+                audio.removeAttribute('src');
+                const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+                hlsRef.current = hls;
+                hls.loadSource(url);
+                hls.attachMedia(audio);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    if (playbackSessionRef.current !== sessionId) return;
+                    audio.volume = volumeRef.current;
+                    audio.play().catch((err) => {
+                        if (err?.name === 'AbortError') return;
+                        if (err?.name === 'NotAllowedError') {
+                            clearStallWatchdog();
+                            setIsAudioLoading(false);
+                            setIsPlaying(false);
+                            setAudioError('Tap Play to listen');
+                        }
+                    });
+                });
+                hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
+                    if (playbackSessionRef.current !== sessionId) return;
+                    if (data?.fatal) {
+                        hls.destroy();
+                        if (hlsRef.current === hls) hlsRef.current = null;
+                        advanceOrHealStation(station, sessionId);
+                    }
+                });
+            } else {
+                audio.src = url;
+                audio.volume = volumeRef.current;
+                audio.load();
+                audio.play().catch((err) => {
+                    if (playbackSessionRef.current !== sessionId) return;
+                    if (err?.name === 'AbortError') return;
+                    if (err?.name === 'NotAllowedError') {
+                        clearStallWatchdog();
+                        setIsAudioLoading(false);
+                        setIsPlaying(false);
+                        setAudioError('Tap Play to listen');
+                    }
+                });
+            }
+        },
+        [advanceOrHealStation, clearStallWatchdog, isHlsStreamUrl]
+    );
+
+    useEffect(() => {
+        loadStreamCandidateRef.current = loadStreamCandidate;
+    }, [loadStreamCandidate]);
 
     const handleAudioError = useCallback(() => {
         if (!currentStation) return;
-        const nextIdx = candidateIdxRef.current + 1;
-        if (nextIdx < candidatesRef.current.length) {
-            candidateIdxRef.current = nextIdx;
-            loadStreamCandidate(candidatesRef.current[nextIdx], currentStation.stationuuid);
-            return;
-        }
-        setBrokenStationIds(prev => new Set(prev).add(currentStation.stationuuid));
-        setAudioError('Stream unavailable');
-        setIsPlaying(false);
-        setIsAudioLoading(false);
-    }, [currentStation, loadStreamCandidate]);
+        advanceOrHealStation(currentStation, playbackSessionRef.current);
+    }, [currentStation, advanceOrHealStation]);
 
     const handlePlayPause = useCallback(() => {
         const audio = audioRef.current;
         if (!audio) return;
         if (audio.paused) {
-            if (audioError && currentStation) {
+            if (audioError === 'Tap Play to listen') {
+                setAudioError(null);
+                setIsAudioLoading(true);
+                audio.play().catch((err) => {
+                    if (err?.name === 'AbortError') return;
+                    if (err?.name === 'NotAllowedError') {
+                        setIsAudioLoading(false);
+                        setAudioError('Tap Play to listen');
+                        return;
+                    }
+                    handleAudioError();
+                });
+            } else if (audioError && currentStation) {
                 setIsAudioLoading(true);
                 setAudioError(null);
-                setPlaybackTrigger(t => t + 1);
+                setPlaybackTrigger((t) => t + 1);
             } else {
-                audio.play().catch(handleAudioError);
+                audio.play().catch((err) => {
+                    if (err?.name === 'AbortError') return;
+                    if (err?.name === 'NotAllowedError') {
+                        setIsAudioLoading(false);
+                        setAudioError('Tap Play to listen');
+                        return;
+                    }
+                    handleAudioError();
+                });
             }
         } else {
+            clearStallWatchdog();
             audio.pause();
         }
-    }, [audioError, currentStation, handleAudioError]);
+    }, [audioError, clearStallWatchdog, currentStation, handleAudioError]);
     
     const handleStationClick = useCallback((stationData: RadioPointData) => {
         const station = allStations.find(s => s.stationuuid === stationData.id);
@@ -595,7 +803,7 @@ const App: React.FC = () => {
         };
         setPinnedData(pointData);
 
-        if (currentStation?.stationuuid === station.stationuuid && !audioError) {
+        if (currentStation?.stationuuid === station.stationuuid && (!audioError || audioError === 'Tap Play to listen')) {
             handlePlayPause();
             return;
         }
@@ -614,27 +822,31 @@ const App: React.FC = () => {
 
     useEffect(() => {
         if (currentStation && audioRef.current) {
+            const sessionId = ++playbackSessionRef.current;
+            hasCalledResolveRef.current = false;
+            activeRelayNameRef.current = null;
+
             const candidates = getPlayableCandidates(currentStation);
             candidatesRef.current = candidates;
             candidateIdxRef.current = 0;
+
             if (candidates.length > 0) {
-                loadStreamCandidate(candidates[0], currentStation.stationuuid);
+                loadStreamCandidate(candidates[0], currentStation, sessionId);
             } else {
-                setBrokenStationIds(prev => new Set(prev).add(currentStation.stationuuid));
-                setAudioError('Stream unavailable');
-                setIsPlaying(false);
-                setIsAudioLoading(false);
+                void resolveAndHealStation(currentStation, sessionId, false);
             }
         }
         return () => {
+            clearStallWatchdog();
             if (hlsRef.current) {
                 hlsRef.current.destroy();
                 hlsRef.current = null;
             }
         };
-    }, [currentStation, playbackTrigger, getPlayableCandidates, loadStreamCandidate]);
+    }, [currentStation, playbackTrigger, getPlayableCandidates, loadStreamCandidate, resolveAndHealStation, clearStallWatchdog]);
 
     useEffect(() => {
+        volumeRef.current = volume;
         if (audioRef.current) {
             audioRef.current.volume = volume;
         }
@@ -792,8 +1004,26 @@ const App: React.FC = () => {
             <audio
                 ref={audioRef}
                 onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                onPlaying={() => { setIsAudioLoading(false); setAudioError(null); }}
+                onPause={() => { clearStallWatchdog(); setIsPlaying(false); }}
+                onCanPlay={() => clearStallWatchdog()}
+                onPlaying={() => {
+                    clearStallWatchdog();
+                    setIsAudioLoading(false);
+                    setAudioError(null);
+                    if (currentStation) {
+                        setBrokenStationIds((prev) => {
+                            if (!prev.has(currentStation.stationuuid)) return prev;
+                            const next = new Set(prev);
+                            next.delete(currentStation.stationuuid);
+                            return next;
+                        });
+                        if (activeRelayNameRef.current) {
+                            setStatusMessage(`Live relay: ${activeRelayNameRef.current} (${currentStation.name})`);
+                        } else {
+                            setStatusMessage(`Tuned to ${currentStation.name}`);
+                        }
+                    }
+                }}
                 onWaiting={() => setIsAudioLoading(true)}
                 onError={handleAudioError}
             />

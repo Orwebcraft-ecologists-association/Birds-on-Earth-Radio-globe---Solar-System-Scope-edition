@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI, Modality, ThinkingLevel } from '@google/genai';
 import type { Content, GenerateContentResponse } from '@google/genai';
+import { handleRadioProxy, resolveStationStreams } from './services/radioStreamService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -971,6 +972,44 @@ async function startServer() {
             console.warn(`Gemini /api/video/generate status ${formatted.status}: ${formatted.message}`);
         }
         res.status(formatted.status).json({ error: formatted.message });
+    });
+
+    app.get('/api/radio/proxy', handleRadioProxy);
+
+    app.post('/api/radio/resolve', async (req: Request, res: Response) => {
+        try {
+            const body = (req.body || {}) as {
+                stationuuid?: unknown;
+                name?: unknown;
+                country?: unknown;
+                candidateUrls?: unknown;
+                forceRefresh?: unknown;
+            };
+
+            const stationuuid = typeof body.stationuuid === 'string' ? body.stationuuid.trim().slice(0, 128) : undefined;
+            const name = typeof body.name === 'string' ? body.name.trim().slice(0, 160) : undefined;
+            const country = typeof body.country === 'string' ? body.country.trim().slice(0, 100) : undefined;
+            const forceRefresh = body.forceRefresh === true;
+            const candidateUrls = Array.isArray(body.candidateUrls)
+                ? body.candidateUrls
+                      .filter((u): u is string => typeof u === 'string' && u.trim().length > 0 && u.length <= 2048)
+                      .map((u) => u.trim())
+                      .slice(0, 10)
+                : [];
+
+            const resolved = await resolveStationStreams({
+                stationuuid,
+                name,
+                country,
+                candidateUrls,
+                forceRefresh,
+            });
+
+            res.json(resolved);
+        } catch (err) {
+            console.error('Error resolving radio stream:', err);
+            res.status(500).json({ candidates: [], repairedUrl: null, source: 'none' });
+        }
     });
 
     if (process.env.NODE_ENV !== 'production') {

@@ -277,10 +277,22 @@ const InfoPanel: React.FC<{
                             <div className="flex-1 min-w-0">
                                 <p
                                     className={`text-[10px] font-black uppercase tracking-widest ${
-                                        audioError ? 'text-red-400' : 'text-emerald-400'
+                                        isAudioLoading
+                                            ? 'text-blue-400'
+                                            : audioError === 'Tap Play to listen'
+                                            ? 'text-amber-400'
+                                            : audioError
+                                            ? 'text-red-400'
+                                            : 'text-emerald-400'
                                     }`}
                                 >
-                                    {audioError ? audioError : isAudioLoading ? 'Connecting...' : isPlaying ? 'Live Stream' : 'Paused'}
+                                    {isAudioLoading
+                                        ? 'Healing / Connecting...'
+                                        : audioError
+                                        ? audioError
+                                        : isPlaying
+                                        ? 'Live Stream'
+                                        : 'Paused'}
                                 </p>
                                 <input
                                     type="range"
