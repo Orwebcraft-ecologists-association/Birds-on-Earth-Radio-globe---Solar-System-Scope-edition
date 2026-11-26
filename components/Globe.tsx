@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { allNamedStars } from '../services/constellationData';
+import { getCountryBorderPolylines, getTerrainDisplacementAt } from '../services/worldGeography';
 import {
     createEarthTextures,
     createOrbitalObservatorySatellite,
@@ -136,6 +137,7 @@ interface GlobeProps {
     isTreeLocationPickerMode: boolean;
     onTreeLocationPick: (coords: { lat: number; lon: number }) => void;
     timescape: TimescapeConfig;
+    terrainRelief?: number;
 }
 
 interface ThreeObjectRef {
@@ -143,6 +145,10 @@ interface ThreeObjectRef {
     camera: THREE.PerspectiveCamera;
     renderer: THREE.WebGLRenderer;
     globeGroup: THREE.Group;
+    globeMesh: THREE.Mesh;
+    globeGeo: THREE.SphereGeometry;
+    countryBorders: THREE.LineSegments;
+    borderLatLons: Float32Array;
     clouds: THREE.Mesh;
     satellite: THREE.Group;
     starfield: THREE.Group;
@@ -344,9 +350,52 @@ const Fallback2DGlobe: React.FC<{
             ctx.lineWidth = 1.5;
             ctx.stroke();
 
-            // Graticule meridians / parallels
+            // Real world continents & country outlines (orthographic projection)
             const lat0 = (rotRef.current.lat * Math.PI) / 180;
             const lon0 = (rotRef.current.lon * Math.PI) / 180;
+            const sinLat0 = Math.sin(lat0);
+            const cosLat0 = Math.cos(lat0);
+            const borderRings = getCountryBorderPolylines();
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, r - 0.5, 0, Math.PI * 2);
+            ctx.clip();
+
+            ctx.fillStyle = 'rgba(34, 139, 94, 0.36)';
+            ctx.strokeStyle = 'rgba(125, 211, 252, 0.55)';
+            ctx.lineWidth = 0.9;
+            for (const ring of borderRings) {
+                if (ring.length < 3) continue;
+                let anyVisible = false;
+                let prevVisible = false;
+                ctx.beginPath();
+                for (let i = 0; i < ring.length; i++) {
+                    const phi = (ring[i][1] * Math.PI) / 180;
+                    const lam = (ring[i][0] * Math.PI) / 180;
+                    const sinPhi = Math.sin(phi);
+                    const cosPhi = Math.cos(phi);
+                    const dLam = lam - lon0;
+                    const cosC = sinLat0 * sinPhi + cosLat0 * cosPhi * Math.cos(dLam);
+                    if (cosC >= -0.02) {
+                        const px = cx + r * cosPhi * Math.sin(dLam);
+                        const py = cy - r * (cosLat0 * sinPhi - sinLat0 * cosPhi * Math.cos(dLam));
+                        if (!prevVisible) ctx.moveTo(px, py);
+                        else ctx.lineTo(px, py);
+                        prevVisible = true;
+                        if (cosC > 0) anyVisible = true;
+                    } else {
+                        prevVisible = false;
+                    }
+                }
+                if (anyVisible) {
+                    ctx.fill();
+                    ctx.stroke();
+                }
+            }
+            ctx.restore();
+
+            // Graticule meridians / parallels
             ctx.strokeStyle = 'rgba(148, 163, 184, 0.14)';
             ctx.lineWidth = 1;
             for (let latDeg = -60; latDeg <= 60; latDeg += 30) {
@@ -355,10 +404,10 @@ const Fallback2DGlobe: React.FC<{
                 let started = false;
                 for (let lonDeg = -180; lonDeg <= 180; lonDeg += 10) {
                     const lam = (lonDeg * Math.PI) / 180;
-                    const cosC = Math.sin(lat0) * Math.sin(phi) + Math.cos(lat0) * Math.cos(phi) * Math.cos(lam - lon0);
+                    const cosC = sinLat0 * Math.sin(phi) + cosLat0 * Math.cos(phi) * Math.cos(lam - lon0);
                     if (cosC > 0) {
                         const px = cx + r * Math.cos(phi) * Math.sin(lam - lon0);
-                        const py = cy - r * (Math.cos(lat0) * Math.sin(phi) - Math.sin(lat0) * Math.cos(phi) * Math.cos(lam - lon0));
+                        const py = cy - r * (cosLat0 * Math.sin(phi) - sinLat0 * Math.cos(phi) * Math.cos(lam - lon0));
                         if (!started) {
                             ctx.moveTo(px, py);
                             started = true;
@@ -492,6 +541,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
         birdPoints,
         treePoints,
         inatPoints,
+        userLocationPoint,
         onHover,
         sunIntensity,
         starRotationSpeed,
@@ -505,6 +555,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
         isTreeLocationPickerMode,
         onTreeLocationPick,
         timescape,
+        terrainRelief = 0.18,
     } = props;
 
     const canvasMountRef = useRef<HTMLDivElement>(null);
@@ -512,6 +563,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
     const timescapeRef = useRef(timescape);
     const starRotationSpeedRef = useRef(starRotationSpeed);
     const sunIntensityRef = useRef(sunIntensity);
+    const terrainReliefRef = useRef(terrainRelief);
     const onHoverRef = useRef(onHover);
     const onStationClickRef = useRef(onStationClick);
     const onPointClickRef = useRef(onPointClick);
@@ -522,6 +574,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
     useEffect(() => { timescapeRef.current = timescape; }, [timescape]);
     useEffect(() => { starRotationSpeedRef.current = starRotationSpeed; }, [starRotationSpeed]);
     useEffect(() => { sunIntensityRef.current = sunIntensity; }, [sunIntensity]);
+    useEffect(() => { terrainReliefRef.current = terrainRelief; }, [terrainRelief]);
     useEffect(() => { onHoverRef.current = onHover; }, [onHover]);
     useEffect(() => { onStationClickRef.current = onStationClick; }, [onStationClick]);
     useEffect(() => { onPointClickRef.current = onPointClick; }, [onPointClick]);
@@ -613,7 +666,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
         const globeGroup = new THREE.Group();
         scene.add(globeGroup);
 
-        const earthTextures = createEarthTextures(maxAnisotropy);
+        const earthTextures = createEarthTextures(maxAnisotropy, !isSoftwareGl);
         ownedTextures.push(
             earthTextures.albedo,
             earthTextures.roughness,
@@ -626,27 +679,97 @@ export const Globe: React.FC<GlobeProps> = (props) => {
             map: earthTextures.albedo,
             roughnessMap: earthTextures.roughness,
             bumpMap: earthTextures.bump,
-            bumpScale: 0.075,
+            bumpScale: 0.11,
             emissiveMap: earthTextures.nightLights,
             emissive: new THREE.Color(0xffcf88),
-            emissiveIntensity: 0.75,
+            emissiveIntensity: 0.72,
             roughness: 0.85,
             metalness: 0.08,
         });
-        const globeGeo = new THREE.SphereGeometry(GLOBE_RADIUS, isSoftwareGl ? 56 : 72, isSoftwareGl ? 40 : 56);
+        const segW = isSoftwareGl ? 96 : 160;
+        const segH = isSoftwareGl ? 64 : 112;
+        const globeGeo = new THREE.SphereGeometry(GLOBE_RADIUS, segW, segH);
+
+        const applyTerrainDisplacement = (
+            geo: THREE.SphereGeometry,
+            reliefScale: number
+        ) => {
+            const posAttr = geo.attributes.position as THREE.BufferAttribute;
+            const uvAttr = geo.attributes.uv as THREE.BufferAttribute;
+            for (let i = 0; i < posAttr.count; i++) {
+                const u = uvAttr.getX(i);
+                const v = uvAttr.getY(i);
+                const latDeg = (v - 0.5) * 180;
+                const lonDeg = (u - 0.5) * 360;
+                const disp = getTerrainDisplacementAt(latDeg, lonDeg, reliefScale);
+                const x = posAttr.getX(i);
+                const y = posAttr.getY(i);
+                const z = posAttr.getZ(i);
+                const len = Math.sqrt(x * x + y * y + z * z) || 1;
+                const targetR = GLOBE_RADIUS + disp;
+                posAttr.setXYZ(i, (x / len) * targetR, (y / len) * targetR, (z / len) * targetR);
+            }
+            posAttr.needsUpdate = true;
+            geo.computeVertexNormals();
+            geo.attributes.normal.needsUpdate = true;
+        };
+
+        applyTerrainDisplacement(globeGeo, terrainReliefRef.current);
         ownedGeometries.push(globeGeo);
         ownedMaterials.push(globeMaterial);
 
         const globe = new THREE.Mesh(globeGeo, globeMaterial);
+        // Align equirectangular prime meridian (u=0.5) to globeGroup +Z so it matches latLonToVector3(0,0)
+        globe.rotation.y = -Math.PI / 2;
         globe.receiveShadow = !isSoftwareGl;
         globe.castShadow = !isSoftwareGl;
         globeGroup.add(globe);
 
-        const cloudGeo = new THREE.SphereGeometry(GLOBE_RADIUS + 0.085, 48, 36);
+        // 3D Terrain-hugging international border & coastline vector overlay
+        const borderPolylines = getCountryBorderPolylines();
+        const borderLatLonList: number[] = [];
+        for (const ring of borderPolylines) {
+            for (let i = 0; i < ring.length - 1; i++) {
+                borderLatLonList.push(ring[i][1], ring[i][0], ring[i + 1][1], ring[i + 1][0]);
+            }
+        }
+        const borderLatLons = new Float32Array(borderLatLonList);
+        const borderPositions = new Float32Array((borderLatLons.length / 2) * 3);
+        const updateBorderGeometry = (geo: THREE.BufferGeometry, reliefScale: number) => {
+            const pTmp = new THREE.Vector3();
+            for (let i = 0, vIdx = 0; i < borderLatLons.length; i += 2, vIdx += 3) {
+                const lat = borderLatLons[i];
+                const lon = borderLatLons[i + 1];
+                const h = getTerrainDisplacementAt(lat, lon, reliefScale) + 0.014;
+                latLonToVector3(lat, lon, GLOBE_RADIUS, h, pTmp);
+                borderPositions[vIdx] = pTmp.x;
+                borderPositions[vIdx + 1] = pTmp.y;
+                borderPositions[vIdx + 2] = pTmp.z;
+            }
+            const posAttr = geo.getAttribute('position') as THREE.BufferAttribute | undefined;
+            if (posAttr) {
+                posAttr.needsUpdate = true;
+            } else {
+                geo.setAttribute('position', new THREE.BufferAttribute(borderPositions, 3));
+            }
+        };
+        const borderGeo = new THREE.BufferGeometry();
+        updateBorderGeometry(borderGeo, terrainReliefRef.current);
+        const borderMat = new THREE.LineBasicMaterial({
+            color: 0x7dd3fc,
+            transparent: true,
+            opacity: 0.34,
+        });
+        ownedGeometries.push(borderGeo);
+        ownedMaterials.push(borderMat);
+        const countryBorders = new THREE.LineSegments(borderGeo, borderMat);
+        globeGroup.add(countryBorders);
+
+        const cloudGeo = new THREE.SphereGeometry(GLOBE_RADIUS + 0.24, 48, 36);
         const cloudMat = new THREE.MeshStandardMaterial({
             map: earthTextures.clouds,
             transparent: true,
-            opacity: 0.42,
+            opacity: 0.38,
             depthWrite: false,
             roughness: 0.9,
             metalness: 0.0,
@@ -654,6 +777,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
         ownedGeometries.push(cloudGeo);
         ownedMaterials.push(cloudMat);
         const clouds = new THREE.Mesh(cloudGeo, cloudMat);
+        clouds.rotation.y = -Math.PI / 2;
         globeGroup.add(clouds);
 
         // Fresnel Atmospheric Rim Shell
@@ -984,6 +1108,10 @@ export const Globe: React.FC<GlobeProps> = (props) => {
             camera,
             renderer,
             globeGroup,
+            globeMesh: globe,
+            globeGeo,
+            countryBorders,
+            borderLatLons,
             clouds,
             satellite,
             starfield: starfieldGroup,
@@ -1375,11 +1503,52 @@ export const Globe: React.FC<GlobeProps> = (props) => {
         }
     }, [cameraViewPreset]);
 
-    // Sync composite multi-part markers oriented radially outward on Earth surface
+    // Update 3D terrain relief & borders when slider adjusts
+    useEffect(() => {
+        const obj = threeObjectsRef.current;
+        if (!obj) return;
+        const posAttr = obj.globeGeo.attributes.position as THREE.BufferAttribute;
+        const uvAttr = obj.globeGeo.attributes.uv as THREE.BufferAttribute;
+        for (let i = 0; i < posAttr.count; i++) {
+            const latDeg = (uvAttr.getY(i) - 0.5) * 180;
+            const lonDeg = (uvAttr.getX(i) - 0.5) * 360;
+            const disp = getTerrainDisplacementAt(latDeg, lonDeg, terrainRelief);
+            const x = posAttr.getX(i);
+            const y = posAttr.getY(i);
+            const z = posAttr.getZ(i);
+            const len = Math.sqrt(x * x + y * y + z * z) || 1;
+            const targetR = GLOBE_RADIUS + disp;
+            posAttr.setXYZ(i, (x / len) * targetR, (y / len) * targetR, (z / len) * targetR);
+        }
+        posAttr.needsUpdate = true;
+        obj.globeGeo.computeVertexNormals();
+        obj.globeGeo.attributes.normal.needsUpdate = true;
+
+        const borderPos = obj.countryBorders.geometry.getAttribute('position') as THREE.BufferAttribute;
+        if (borderPos) {
+            const pTmp = new THREE.Vector3();
+            for (let i = 0, vIdx = 0; i < obj.borderLatLons.length; i += 2, vIdx++) {
+                const lat = obj.borderLatLons[i];
+                const lon = obj.borderLatLons[i + 1];
+                const h = getTerrainDisplacementAt(lat, lon, terrainRelief) + 0.014;
+                latLonToVector3(lat, lon, GLOBE_RADIUS, h, pTmp);
+                borderPos.setXYZ(vIdx, pTmp.x, pTmp.y, pTmp.z);
+            }
+            borderPos.needsUpdate = true;
+        }
+    }, [terrainRelief]);
+
+    // Sync composite multi-part markers oriented radially outward on Earth terrain surface
     useEffect(() => {
         if (!threeObjectsRef.current) return;
         const { globeGroup, pointMeshes } = threeObjectsRef.current;
-        const points = [...radioPoints, ...birdPoints, ...treePoints, ...inatPoints];
+        const points: PointData[] = [
+            ...radioPoints,
+            ...birdPoints,
+            ...treePoints,
+            ...inatPoints,
+            ...(userLocationPoint ? [userLocationPoint] : []),
+        ];
         const newIds = new Set(points.map((p) => p.id));
 
         pointMeshes.forEach((mesh, id) => {
@@ -1390,6 +1559,7 @@ export const Globe: React.FC<GlobeProps> = (props) => {
         });
 
         points.forEach((p) => {
+            if (typeof p.lat !== 'number' || typeof p.lon !== 'number') return;
             let group = pointMeshes.get(p.id);
             if (!group) {
                 const markerType =
@@ -1399,33 +1569,40 @@ export const Globe: React.FC<GlobeProps> = (props) => {
                         ? 'bird'
                         : p.type === 'tree'
                         ? 'tree'
+                        : p.type === 'user'
+                        ? 'radio'
                         : 'inaturalist';
                 group = createSurfaceMarkerGroup(markerType);
+                if (p.type === 'user') {
+                    group.scale.setScalar(1.35);
+                }
                 group.userData = p;
                 globeGroup.add(group);
                 pointMeshes.set(p.id, group);
             } else {
                 group.userData = p;
             }
-            latLonToVector3(p.lat, p.lon, GLOBE_RADIUS, 0.0, _scratchSurfacePos);
+            const terrainH = getTerrainDisplacementAt(p.lat, p.lon, terrainRelief);
+            latLonToVector3(p.lat, p.lon, GLOBE_RADIUS, terrainH, _scratchSurfacePos);
             group.position.copy(_scratchSurfacePos);
             _scratchNormal.copy(_scratchSurfacePos).normalize();
             _scratchQuat.setFromUnitVectors(_scratchUp, _scratchNormal);
             group.quaternion.copy(_scratchQuat);
         });
-    }, [radioPoints, birdPoints, treePoints, inatPoints]);
+    }, [radioPoints, birdPoints, treePoints, inatPoints, userLocationPoint, terrainRelief]);
 
-    // Rotate Earth cleanly to bring flyToTarget coordinates to face viewer
+    // Rotate Earth cleanly to bring flyToTarget coordinates dead-center to face viewer
     useEffect(() => {
         const obj = threeObjectsRef.current;
         if (!flyToTarget || !obj) return;
         obj.viewPreset = 'earth';
-        obj.targetZoom = 17.5;
-        obj.targetElevation = 2.0;
+        obj.targetZoom = 16.5;
+        obj.targetElevation = 1.6;
+        obj.dragVelocity = { x: 0, y: 0 };
         const targetPhi = -(flyToTarget.lon * Math.PI) / 180;
         const targetTheta = (flyToTarget.lat * Math.PI) / 180;
         obj.globeGroup.rotation.y = targetPhi;
-        obj.globeGroup.rotation.x = THREE.MathUtils.clamp(targetTheta * 0.75, -Math.PI * 0.45, Math.PI * 0.45);
+        obj.globeGroup.rotation.x = THREE.MathUtils.clamp(targetTheta, -Math.PI * 0.46, Math.PI * 0.46);
     }, [flyToTarget]);
 
     useEffect(() => {

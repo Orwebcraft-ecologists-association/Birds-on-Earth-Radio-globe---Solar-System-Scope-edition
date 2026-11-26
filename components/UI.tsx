@@ -18,6 +18,7 @@ import type {
     VideoCreationRecord,
     VideoMode,
     VideoAspectRatio,
+    MapsGroundingLink,
 } from '../types';
 import AboutModal from './AboutModal';
 import { allNamedStars } from '../services/constellationData';
@@ -28,6 +29,7 @@ import { ChatPanel, type ChatWindowSize } from './ChatPanel';
 import { LiveVoicePanel } from './LiveVoicePanel';
 import { VideoStudioPanel } from './VideoStudioPanel';
 import { getWikipediaUrl } from '../services/dataService';
+import { getCountryCenter } from '../services/worldGeography';
 
 interface UIProps {
     statusMessage: string;
@@ -119,6 +121,27 @@ interface UIProps {
     onVideoGenerated: (record: { mode: VideoMode; prompt: string; aspectRatio: VideoAspectRatio }) => Promise<void>;
     onDeleteVideoHistoryItem: (creationId: string) => void;
     onSelectSpeciesPoint?: (point: InfoPanelData) => void;
+    terrainRelief?: number;
+    onTerrainReliefChange?: (relief: number) => void;
+    onLocateViaMaps?: (opts: {
+        stationId?: string;
+        stationName?: string;
+        country?: string;
+        state?: string;
+        lat?: number;
+        lon?: number;
+    }) => Promise<void>;
+    isLocatingViaMaps?: boolean;
+    mapsLocateResult?: {
+        targetKey: string;
+        text: string;
+        lat: number | null;
+        lon: number | null;
+        mapsLinks: MapsGroundingLink[];
+        error?: string;
+    } | null;
+    chatUseMaps?: boolean;
+    onChatUseMapsChange?: (enabled: boolean) => void;
 }
 
 const InfoPanel: React.FC<{
@@ -133,6 +156,9 @@ const InfoPanel: React.FC<{
     onVolumeChange: (v: number) => void;
     isFavorite: boolean;
     onToggleFavorite: (id: string) => void;
+    onLocateViaMaps?: UIProps['onLocateViaMaps'];
+    isLocatingViaMaps?: boolean;
+    mapsLocateResult?: UIProps['mapsLocateResult'];
 }> = ({
     data,
     onClose,
@@ -145,6 +171,9 @@ const InfoPanel: React.FC<{
     onVolumeChange,
     isFavorite,
     onToggleFavorite,
+    onLocateViaMaps,
+    isLocatingViaMaps,
+    mapsLocateResult,
 }) => {
     if (data.type === 'celestial-star' || data.type === 'planet' || data.type === 'sun' || data.type === 'moon') return null;
 
@@ -308,6 +337,63 @@ const InfoPanel: React.FC<{
                         </div>
                     </div>
                 )}
+                {data.type === 'radio' && (
+                    <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                        <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                            <span>Coords: {data.lat.toFixed(2)}°, {data.lon.toFixed(2)}°</span>
+                            {onLocateViaMaps && (
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        void onLocateViaMaps({
+                                            stationId: data.id,
+                                            stationName: data.title,
+                                            country: data.country,
+                                            state: data.state,
+                                            lat: data.lat,
+                                            lon: data.lon,
+                                        })
+                                    }
+                                    disabled={isLocatingViaMaps}
+                                    className="px-2 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-500/30 text-[9px] font-black uppercase tracking-wider text-emerald-200 transition-colors disabled:opacity-50"
+                                >
+                                    {isLocatingViaMaps ? 'Locating...' : 'Verify Maps'}
+                                </button>
+                            )}
+                        </div>
+                        {mapsLocateResult && mapsLocateResult.targetKey === data.id && (
+                            <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 space-y-1.5">
+                                {mapsLocateResult.error ? (
+                                    <p className="text-[11px] text-red-400">{mapsLocateResult.error}</p>
+                                ) : (
+                                    <>
+                                        {mapsLocateResult.text && (
+                                            <p className="text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap">
+                                                {mapsLocateResult.text}
+                                            </p>
+                                        )}
+                                        {mapsLocateResult.mapsLinks.length > 0 && (
+                                            <div className="flex flex-wrap gap-1 pt-1">
+                                                {mapsLocateResult.mapsLinks.map((link) => (
+                                                    <a
+                                                        key={link.uri}
+                                                        href={link.uri}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/30 text-[10px] font-bold text-emerald-200 border border-emerald-400/30"
+                                                    >
+                                                        <span>{link.title}</span>
+                                                        <span>&nearr;</span>
+                                                    </a>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -338,6 +424,9 @@ export const UI: React.FC<UIProps> = (props) => {
         favoriteStations,
         onToggleFavorite,
         onRadioTextChange,
+        onRadioCountryChange,
+        uniqueCountries,
+        uniqueRadioStations,
         activeTab,
         onActiveTabChange,
         isAboutModalOpen,
@@ -349,6 +438,8 @@ export const UI: React.FC<UIProps> = (props) => {
         onSunIntensityChange,
         starRotationSpeed,
         onStarRotationSpeedChange,
+        terrainRelief = 0.18,
+        onTerrainReliefChange,
         onOpenTreeSubmissionModal,
         onOpenSubmissionModal,
         filteredRadioStationsForSearch,
@@ -369,6 +460,11 @@ export const UI: React.FC<UIProps> = (props) => {
         onVideoGenerated,
         onDeleteVideoHistoryItem,
         onSelectSpeciesPoint,
+        onLocateViaMaps,
+        isLocatingViaMaps,
+        mapsLocateResult,
+        chatUseMaps = true,
+        onChatUseMapsChange,
     } = props;
 
     const { user, authReady, authError, signInWithGoogle, signOutUser, clearAuthError } = useFirebaseAuth();
@@ -491,6 +587,9 @@ export const UI: React.FC<UIProps> = (props) => {
                     onVolumeChange={onVolumeChange}
                     isFavorite={pinnedData.type === 'radio' ? favoriteStations.some((s) => s.stationuuid === pinnedData.id) : false}
                     onToggleFavorite={onToggleFavorite}
+                    onLocateViaMaps={onLocateViaMaps}
+                    isLocatingViaMaps={isLocatingViaMaps}
+                    mapsLocateResult={mapsLocateResult}
                 />
             )}
 
@@ -699,11 +798,11 @@ export const UI: React.FC<UIProps> = (props) => {
                                 ))}
 
                             {activeTab === 'stations' && (
-                                <div className="space-y-4">
+                                <div className="space-y-3">
                                     <div className="flex gap-2">
                                         <input
                                             type="text"
-                                            placeholder="Search stations, countries, Israel..."
+                                            placeholder="Search stations, cities, countries..."
                                             value={filters.radio.text}
                                             onChange={(e) => onRadioTextChange(e.target.value)}
                                             className="flex-1 bg-slate-800 rounded-xl px-4 py-2.5 text-xs text-white border border-white/10 outline-none focus:ring-2 focus:ring-blue-500/50 font-bold"
@@ -716,6 +815,69 @@ export const UI: React.FC<UIProps> = (props) => {
                                             + Add
                                         </button>
                                     </div>
+                                    <div className="flex items-center gap-2">
+                                        <select
+                                            value={filters.radio.country}
+                                            onChange={(e) => onRadioCountryChange(e.target.value)}
+                                            aria-label="Filter stations by country"
+                                            className="flex-1 bg-slate-800 rounded-xl px-3 py-2 text-xs text-white border border-white/10 outline-none focus:ring-2 focus:ring-blue-500/50 font-bold"
+                                        >
+                                            <option value="all">All Countries ({uniqueRadioStations.length})</option>
+                                            {uniqueCountries.map((country) => (
+                                                <option key={country} value={country}>
+                                                    {country}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        {filters.radio.country !== 'all' && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const c = getCountryCenter(filters.radio.country);
+                                                    if (c) onFlyToLocation(c.lat, c.lon);
+                                                    void onLocateViaMaps?.({ country: filters.radio.country, lat: c?.lat, lon: c?.lon });
+                                                }}
+                                                disabled={isLocatingViaMaps}
+                                                className="px-2.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider text-emerald-200 transition-colors flex-shrink-0 disabled:opacity-50"
+                                                title="Center globe & ground country info with Google Maps"
+                                            >
+                                                {isLocatingViaMaps ? 'Maps...' : 'Maps Info'}
+                                            </button>
+                                        )}
+                                    </div>
+                                    {filters.radio.country !== 'all' &&
+                                        mapsLocateResult &&
+                                        mapsLocateResult.targetKey === `country:${filters.radio.country}` && (
+                                            <div className="p-3 rounded-xl bg-white/5 border border-emerald-500/25 space-y-2">
+                                                {mapsLocateResult.error ? (
+                                                    <p className="text-[11px] text-red-400">{mapsLocateResult.error}</p>
+                                                ) : (
+                                                    <>
+                                                        {mapsLocateResult.text && (
+                                                            <p className="text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap">
+                                                                {mapsLocateResult.text}
+                                                            </p>
+                                                        )}
+                                                        {mapsLocateResult.mapsLinks.length > 0 && (
+                                                            <div className="flex flex-wrap gap-1.5">
+                                                                {mapsLocateResult.mapsLinks.map((link) => (
+                                                                    <a
+                                                                        key={link.uri}
+                                                                        href={link.uri}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/30 text-[10px] font-bold text-emerald-200 border border-emerald-400/30"
+                                                                    >
+                                                                        <span>{link.title}</span>
+                                                                        <span>&nearr;</span>
+                                                                    </a>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
                                     <div className="space-y-1">
                                         {filteredRadioStationsForSearch.slice(0, 60).map((station) => {
                                             const isActive = currentStation?.stationuuid === station.stationuuid;
@@ -960,6 +1122,8 @@ export const UI: React.FC<UIProps> = (props) => {
                                     onChatSizeChange={setChatSize}
                                     onRoleChange={onChatRoleChange}
                                     onModelChange={onChatModelChange}
+                                    useMapsGrounding={chatUseMaps}
+                                    onToggleMapsGrounding={() => onChatUseMapsChange?.(!chatUseMaps)}
                                     onSendMessage={onSendChatMessage}
                                     onClearChat={onClearChat}
                                     onDismissError={onDismissChatError}
@@ -1016,6 +1180,23 @@ export const UI: React.FC<UIProps> = (props) => {
 
                             {activeTab === 'visuals' && (
                                 <div className="space-y-6 py-2">
+                                    {onTerrainReliefChange && (
+                                        <div className="space-y-3">
+                                            <div className="flex justify-between items-center">
+                                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Globe 3D Terrain</label>
+                                                <span className="text-[10px] font-mono text-emerald-400">{Math.round((terrainRelief / 0.18) * 100)}%</span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="0.36"
+                                                step="0.01"
+                                                value={terrainRelief}
+                                                onChange={(e) => onTerrainReliefChange(parseFloat(e.target.value))}
+                                                className="w-full accent-emerald-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer"
+                                            />
+                                        </div>
+                                    )}
                                     <div className="space-y-3">
                                         <div className="flex justify-between items-center">
                                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sun Exposure</label>

@@ -1,22 +1,14 @@
 
 import type { RadioStation, BirdSighting, TreeSighting, INaturalistObservation } from '../types';
 import { prepackagedStations } from './stationData';
+import { normalizeCountryName, repairStationCoordinates } from './worldGeography';
 
 // --- Data Cleaning and Validation ---
 
-// A map to normalize common country name variations.
-const countryNameMap: { [key: string]: string } = {
-  'USA': 'United States',
-  'UK': 'United Kingdom',
-  'United States of America': 'United States',
-  'Great Britain': 'United Kingdom',
-  'Russian Federation': 'Russia',
-};
-
 /**
- * Cleans and standardizes a single radio station object.
+ * Cleans, standardizes, and geographically verifies a single radio station object.
  * @param station The raw radio station object.
- * @returns A cleaned radio station object.
+ * @returns A cleaned, truly positioned radio station object.
  */
 const cleanStationData = (station: RadioStation): RadioStation => {
   // 1. Clean and normalize tags
@@ -24,21 +16,16 @@ const cleanStationData = (station: RadioStation): RadioStation => {
   if (typeof tags !== 'string' || tags.trim() === '') {
     tags = 'various';
   } else {
-    // Standardize to lowercase, comma-separated, with no extra spaces
     tags = tags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean).join(',');
   }
 
-  // 2. Normalize country name
-  let country = station.country.trim();
-  if (countryNameMap[country]) {
-    country = countryNameMap[country];
-  }
-
-  return {
+  // 2. Normalize country name & repair missing/ocean/wrong-country coordinates
+  const country = normalizeCountryName(station.country || '');
+  return repairStationCoordinates({
     ...station,
     tags,
     country,
-  };
+  });
 };
 
 
@@ -82,14 +69,23 @@ export const fetchStations = async (): Promise<RadioStation[]> => {
         // 1. Validation: Ensure essential fields exist and are valid.
         if (!station || !station.stationuuid) return;
         if (!station.url_resolved || typeof station.url_resolved !== 'string' || station.url_resolved.trim() === '') return;
-        if (station.geo_lat == null || station.geo_long == null) return;
-        if (station.geo_lat < -90 || station.geo_lat > 90 || station.geo_long < -180 || station.geo_long > 180) return;
         if (!station.country || typeof station.country !== 'string' || station.country.trim() === '') return;
-        
-        // 2. Cleaning: Standardize fields like tags and country names.
-        const cleanedStation = cleanStationData(station);
 
-        // 3. Add to map: The station is valid and clean.
+        // 2. Cleaning & Geographic Repair: Standardize fields and ensure true city/country coordinates on land.
+        const cleanedStation = cleanStationData(station);
+        if (
+            !Number.isFinite(cleanedStation.geo_lat) ||
+            !Number.isFinite(cleanedStation.geo_long) ||
+            cleanedStation.geo_lat < -90 ||
+            cleanedStation.geo_lat > 90 ||
+            cleanedStation.geo_long < -180 ||
+            cleanedStation.geo_long > 180 ||
+            (Math.abs(cleanedStation.geo_lat) < 0.01 && Math.abs(cleanedStation.geo_long) < 0.01)
+        ) {
+            return;
+        }
+
+        // 3. Add to map: The station is valid, clean, and truly located.
         stationMap.set(cleanedStation.stationuuid, cleanedStation);
     };
     

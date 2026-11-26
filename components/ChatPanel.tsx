@@ -15,6 +15,8 @@ interface ChatPanelProps {
     onChatSizeChange: (size: ChatWindowSize) => void;
     onRoleChange: (role: ChatRoleId) => void;
     onModelChange: (model: ChatModelId) => void;
+    useMapsGrounding?: boolean;
+    onToggleMapsGrounding?: () => void;
     onSendMessage: (message: string) => void;
     onClearChat: () => void;
     onDismissError: () => void;
@@ -71,6 +73,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     onChatSizeChange,
     onRoleChange,
     onModelChange,
+    useMapsGrounding = true,
+    onToggleMapsGrounding,
     onSendMessage,
     onClearChat,
     onDismissError,
@@ -153,6 +157,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                             </button>
                         ))}
                     </div>
+                    {onToggleMapsGrounding && (
+                        <button
+                            type="button"
+                            onClick={onToggleMapsGrounding}
+                            className={`px-2 py-1 rounded-lg border text-[9px] font-black uppercase tracking-wider transition-colors ${
+                                useMapsGrounding
+                                    ? 'bg-emerald-600/25 border-emerald-400/50 text-emerald-200'
+                                    : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                            }`}
+                            title="Ground geographic answers with Google Maps via gemini-4-hydrogen"
+                        >
+                            Maps {useMapsGrounding ? 'On' : 'Off'}
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={() => onModelChange(model === 'gemini-4-hydrogen' ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen')}
@@ -228,7 +246,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     messages.map(msg => (
                         <div
                             key={msg.id}
-                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                            className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                         >
                             <div
                                 className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap break-words ${
@@ -241,6 +259,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                             >
                                 {msg.text || (isStreaming ? '...' : '')}
                             </div>
+                            {msg.role === 'model' && msg.mapsLinks && msg.mapsLinks.length > 0 && (
+                                <div className="max-w-[88%] mt-1.5 flex flex-wrap gap-1.5">
+                                    {msg.mapsLinks.map((link) => (
+                                        <a
+                                            key={link.uri}
+                                            href={link.uri}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            title={link.snippets?.[0] || link.title}
+                                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/30 border border-emerald-400/30 text-[10px] font-bold text-emerald-200 transition-colors"
+                                        >
+                                            <span>{link.title}</span>
+                                            <span>&nearr;</span>
+                                        </a>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     ))
                 )}

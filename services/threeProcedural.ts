@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getCountryBorderPolylines, getEarthElevationSample } from './worldGeography';
 
 function hash2D(x: number, y: number, seed: number): number {
     const n = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453123;
@@ -43,9 +44,9 @@ export interface EarthProceduralTextures {
     clouds: THREE.CanvasTexture;
 }
 
-export function createEarthTextures(maxAnisotropy: number): EarthProceduralTextures {
-    const w = 1024;
-    const h = 512;
+export function createEarthTextures(maxAnisotropy: number, highRes: boolean = true): EarthProceduralTextures {
+    const w = highRes ? 2048 : 1024;
+    const h = highRes ? 1024 : 512;
 
     const albedoCanvas = document.createElement('canvas');
     albedoCanvas.width = w;
@@ -79,80 +80,125 @@ export function createEarthTextures(maxAnisotropy: number): EarthProceduralTextu
 
     for (let y = 0; y < h; y++) {
         const v = y / h;
-        const lat = (0.5 - v) * Math.PI;
-        const absLat = Math.abs(lat) / (Math.PI * 0.5);
+        const latDeg = 90 - (y + 0.5) * (180 / h);
+        const lat = (latDeg * Math.PI) / 180;
+        const absLat = Math.abs(latDeg) / 90;
 
         for (let x = 0; x < w; x++) {
             const u = x / w;
-            const lon = (u - 0.5) * Math.PI * 2;
+            const lonDeg = ((x + 0.5) / w) * 360 - 180;
+            const lon = (lonDeg * Math.PI) / 180;
             const idx = (y * w + x) * 4;
 
-            // Macro continental + regional biome modulation
-            const continent = fbmSpherical(lat, lon, 4, 11);
-            const ridge = fbmSpherical(lat * 1.4, lon * 1.4, 3, 47);
-            const isPolar = absLat > 0.82 - continent * 0.09;
-            const elevation = continent * 0.78 + ridge * 0.22;
+            const { land, elevation } = getEarthElevationSample(latDeg, lonDeg);
+            const micro = fbmSpherical(lat * 2.2, lon * 2.2, 3, 47);
+            const aridityNoise = fbmSpherical(lat + 0.4, lon - 0.6, 2, 73);
 
-            let r = 16;
-            let g = 62;
-            let b = 128;
-            let rough = 92; // ocean specular sheen (~0.36)
-            let bumpVal = 40;
+            // Real polar ice caps (Antarctica south of ~68S, Arctic ice pack north of ~80N, Greenland ice sheet)
+            const isGreenlandIce = latDeg > 62 && latDeg < 83 && lonDeg > -58 && lonDeg < -20 && land > 0.3;
+            const isAntarctica = latDeg < -63 && land > 0.25;
+            const isPolarSeaIce = absLat > 0.90 - micro * 0.04;
+
+            let r = 12;
+            let g = 46;
+            let b = 104;
+            let rough = 86;
+            let bumpVal = 24;
             let nightR = 0;
             let nightG = 0;
             let nightB = 0;
 
-            if (isPolar) {
-                r = 224;
-                g = 234;
-                b = 245;
-                rough = 210;
-                bumpVal = 175;
-            } else if (elevation > 0.525) {
-                const landH = (elevation - 0.525) / 0.475;
-                const aridity = fbmSpherical(lat + 0.5, lon - 0.8, 2, 73);
-                const warmBelt = Math.max(0, 1 - Math.abs(absLat - 0.24) * 4.0);
+            if (isAntarctica || isGreenlandIce || isPolarSeaIce) {
+                const iceShade = 0.88 + elevation * 0.14;
+                r = Math.min(255, Math.round(224 * iceShade));
+                g = Math.min(255, Math.round(236 * iceShade));
+                b = Math.min(255, Math.round(248 * iceShade));
+                rough = 195;
+                bumpVal = Math.round(135 + elevation * 115);
+            } else if (land > 0.22) {
+                const desertBelt =
+                    (latDeg > 13 && latDeg < 34 && lonDeg > -17 && lonDeg < 60) || // Sahara + Arabia
+                    (latDeg > -30 && latDeg < -18 && lonDeg > 116 && lonDeg < 142) || // Australian Outback
+                    (latDeg > 37 && latDeg < 45 && lonDeg > 55 && lonDeg < 108) || // Central Asia / Gobi
+                    (latDeg > 24 && latDeg < 37 && lonDeg > -117 && lonDeg < -102); // Sonoran / Mojave
 
-                if (landH > 0.55) {
-                    // Alpine & mountain peaks
-                    r = Math.round(135 + landH * 75);
-                    g = Math.round(128 + landH * 72);
-                    b = Math.round(120 + landH * 74);
+                const tropicalRainforest =
+                    Math.abs(latDeg) < 12 &&
+                    ((lonDeg > -78 && lonDeg < -48) || // Amazon
+                        (lonDeg > 9 && lonDeg < 31) || // Congo
+                        (lonDeg > 95 && lonDeg < 150)); // Maritime SE Asia
+
+                const desertWeight = desertBelt ? Math.min(1, 0.55 + aridityNoise * 0.55) : Math.max(0, (aridityNoise - 0.55) * 1.3 * Math.max(0, 1 - Math.abs(absLat - 0.27) * 4.5));
+
+                if (elevation > 0.62) {
+                    // Alpine snow peaks & high rocky cordilleras (Himalayas, Andes, Rockies, Alps)
+                    const snow = Math.max(0, Math.min(1, (elevation - 0.62) / 0.28 + (absLat > 0.45 ? 0.22 : 0)));
+                    const rockR = 128 + micro * 38;
+                    const rockG = 114 + micro * 34;
+                    const rockB = 102 + micro * 30;
+                    r = Math.round(rockR * (1 - snow) + 236 * snow);
+                    g = Math.round(rockG * (1 - snow) + 242 * snow);
+                    b = Math.round(rockB * (1 - snow) + 248 * snow);
                     rough = 235;
-                    bumpVal = Math.round(180 + landH * 75);
-                } else if (warmBelt > 0.45 && aridity > 0.48) {
-                    // Subtropical arid plains
-                    r = Math.round(176 + aridity * 32);
-                    g = Math.round(145 + aridity * 22);
-                    b = Math.round(98 + aridity * 16);
+                    bumpVal = Math.round(165 + elevation * 90);
+                } else if (elevation > 0.36) {
+                    // Foothills, plateaus, highland steppes
+                    const mixDesert = Math.min(0.85, desertWeight);
+                    r = Math.round((84 + micro * 42) * (1 - mixDesert) + 178 * mixDesert);
+                    g = Math.round((112 + micro * 36) * (1 - mixDesert) + 148 * mixDesert);
+                    b = Math.round((64 + micro * 24) * (1 - mixDesert) + 104 * mixDesert);
                     rough = 225;
-                    bumpVal = Math.round(125 + landH * 65);
+                    bumpVal = Math.round(115 + elevation * 115);
+                } else if (desertWeight > 0.42) {
+                    // Arid plains & dunes
+                    r = Math.round(182 + aridityNoise * 38 + micro * 16);
+                    g = Math.round(150 + aridityNoise * 28 + micro * 12);
+                    b = Math.round(100 + aridityNoise * 20 + micro * 10);
+                    rough = 228;
+                    bumpVal = Math.round(78 + elevation * 95);
+                } else if (tropicalRainforest) {
+                    // Deep emerald equatorial canopy
+                    r = Math.round(24 + micro * 26 + elevation * 25);
+                    g = Math.round(84 + micro * 38 + elevation * 28);
+                    b = Math.round(36 + micro * 18);
+                    rough = 212;
+                    bumpVal = Math.round(80 + elevation * 105);
                 } else {
-                    // Temperate & equatorial forest greens
-                    r = Math.round(38 + landH * 46);
-                    g = Math.round(96 + landH * 52);
-                    b = Math.round(48 + landH * 24);
-                    rough = 215;
-                    bumpVal = Math.round(115 + landH * 75);
+                    // Temperate & boreal forests / grasslands
+                    const boreal = absLat > 0.58 ? (absLat - 0.58) / 0.26 : 0;
+                    r = Math.round((42 + micro * 34) * (1 - boreal) + 64 * boreal);
+                    g = Math.round((102 + micro * 42) * (1 - boreal) + 88 * boreal);
+                    b = Math.round((48 + micro * 20) * (1 - boreal) + 58 * boreal);
+                    rough = 216;
+                    bumpVal = Math.round(74 + elevation * 110);
                 }
 
-                // Coastal / temperate night lights near habitable coasts
-                if (elevation < 0.60 && absLat < 0.65) {
-                    const cluster = hash2D(Math.floor(x / 3), Math.floor(y / 3), 99);
-                    if (cluster > 0.86) {
-                        const glow = Math.min(1, (cluster - 0.86) * 7.2);
+                // Habitable land night city lights (below polar latitudes & low/mid elevation)
+                if (absLat < 0.70 && elevation < 0.52) {
+                    const cluster = hash2D(Math.floor(x / (highRes ? 4 : 2)), Math.floor(y / (highRes ? 4 : 2)), 99);
+                    const densityBias =
+                        (latDeg > 30 && latDeg < 58 && lonDeg > -10 && lonDeg < 45) || // Europe + Levant
+                        (latDeg > 24 && latDeg < 48 && lonDeg > -125 && lonDeg < -68) || // N America
+                        (latDeg > 10 && latDeg < 42 && lonDeg > 68 && lonDeg < 142) // India + East Asia
+                            ? 0.055
+                            : 0.0;
+                    if (cluster > 0.875 - densityBias) {
+                        const glow = Math.min(1, (cluster - (0.875 - densityBias)) * 6.5);
                         nightR = Math.round(255 * glow);
-                        nightG = Math.round(205 * glow);
-                        nightB = Math.round(120 * glow);
+                        nightG = Math.round(202 * glow);
+                        nightB = Math.round(115 * glow);
                     }
                 }
             } else {
-                const shelf = Math.max(0, 1 - (0.525 - elevation) * 7.5);
-                r = Math.round(12 + shelf * 28);
-                g = Math.round(48 + shelf * 64);
-                b = Math.round(108 + shelf * 56);
-                rough = Math.round(88 + shelf * 14);
-                bumpVal = 40;
+                // Ocean bathymetry shading (shallower coastal continental shelf cyan-blue -> abyssal trench navy)
+                const abyss = fbmSpherical(lat * 1.8, lon * 1.8, 3, 211);
+                const shallowBand = Math.max(0, Math.min(1, land * 4.5));
+                const midShelf = Math.max(0, 1 - Math.abs(land - 0.08) * 5) * 0.25;
+                r = Math.round(10 + shallowBand * 26 + abyss * 8);
+                g = Math.round(42 + shallowBand * 72 + midShelf * 45 + abyss * 14);
+                b = Math.round(100 + shallowBand * 68 + midShelf * 32 + abyss * 20);
+                rough = Math.round(78 + shallowBand * 16);
+                bumpVal = Math.round(18 + abyss * 12);
             }
 
             albedoImg.data[idx] = r;
@@ -189,6 +235,27 @@ export function createEarthTextures(maxAnisotropy: number): EarthProceduralTextu
     bumpCtx.putImageData(bumpImg, 0, 0);
     nightCtx.putImageData(nightImg, 0, 0);
     cloudCtx.putImageData(cloudImg, 0, 0);
+
+    // Crisp international borders & coastline rim onto equirectangular albedo canvas
+    const polylines = getCountryBorderPolylines();
+    albedoCtx.save();
+    albedoCtx.strokeStyle = 'rgba(186, 230, 253, 0.34)';
+    albedoCtx.lineWidth = highRes ? 1.15 : 0.8;
+    albedoCtx.lineJoin = 'round';
+    for (const shiftLon of [0, -360, 360]) {
+        albedoCtx.beginPath();
+        for (const ring of polylines) {
+            if (ring.length < 2) continue;
+            for (let i = 0; i < ring.length; i++) {
+                const px = ((ring[i][0] + shiftLon + 180) / 360) * w;
+                const py = ((90 - ring[i][1]) / 180) * h;
+                if (i === 0) albedoCtx.moveTo(px, py);
+                else albedoCtx.lineTo(px, py);
+            }
+        }
+        albedoCtx.stroke();
+    }
+    albedoCtx.restore();
 
     const aniso = Math.min(8, Math.max(1, maxAnisotropy));
 

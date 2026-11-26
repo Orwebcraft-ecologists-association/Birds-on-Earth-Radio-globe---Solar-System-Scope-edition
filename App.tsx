@@ -6,6 +6,7 @@ import { ExplorePanel } from './components/ExplorePanel';
 import TreeSubmissionModal from './components/TreeSubmissionModal';
 import SubmissionModal from './components/SubmissionModal';
 import { fetchStations, connectToBirdNET, getImageURL, startSimulation, stopSimulation, addSightingToCache, loadSightingsFromCache, startTreeSimulation, stopTreeSimulation, fetchINaturalistObservations } from './services/dataService';
+import { getCountryCenter } from './services/worldGeography';
 import { allNamedStars } from './services/constellationData';
 import { useFirebaseAuth } from './components/FirebaseProvider';
 import {
@@ -20,7 +21,7 @@ import {
     subscribeUserFavorites,
     subscribeUserVideoCreations
 } from './services/firebaseDataService';
-import type { RadioStation, BirdSighting, TreeSighting, PointData, InfoPanelData, Filters, RadioPointData, BirdPointData, TreePointData, WeatherPreset, ActiveTab, StationSubmission, CelestialPointData, CelestialTarget, INaturalistObservation, INaturalistPointData, TimescapeConfig, ChatMessage, ChatModelId, ChatRoleId, CameraViewPreset, VideoCreationRecord, VideoMode, VideoAspectRatio } from './types';
+import type { RadioStation, BirdSighting, TreeSighting, PointData, InfoPanelData, Filters, RadioPointData, BirdPointData, TreePointData, WeatherPreset, ActiveTab, StationSubmission, CelestialPointData, CelestialTarget, INaturalistObservation, INaturalistPointData, TimescapeConfig, ChatMessage, ChatModelId, ChatRoleId, CameraViewPreset, VideoCreationRecord, VideoMode, VideoAspectRatio, MapsGroundingLink } from './types';
 
 declare const Hls: any;
 
@@ -243,12 +244,25 @@ const App: React.FC = () => {
     const { user, authReady, signInWithGoogle } = useFirebaseAuth();
     const [baseStations, setBaseStations] = useState<RadioStation[]>([]);
     const [submittedStations, setSubmittedStations] = useState<RadioStation[]>([]);
+    const [stationCoordOverrides, setStationCoordOverrides] = useState<Record<string, { lat: number; lon: number }>>(() => {
+        if (typeof window === 'undefined') return {};
+        try {
+            const raw = window.sessionStorage.getItem('healed_station_coords_v1');
+            return raw ? JSON.parse(raw) : {};
+        } catch {
+            return {};
+        }
+    });
+
     const allStations = useMemo(() => {
         const map = new Map<string, RadioStation>();
         baseStations.forEach(s => map.set(s.stationuuid, s));
         submittedStations.forEach(s => map.set(s.stationuuid, s));
-        return Array.from(map.values());
-    }, [baseStations, submittedStations]);
+        return Array.from(map.values()).map(s => {
+            const override = stationCoordOverrides[s.stationuuid];
+            return override ? { ...s, geo_lat: override.lat, geo_long: override.lon } : s;
+        });
+    }, [baseStations, submittedStations, stationCoordOverrides]);
 
     const [birdSightings, setBirdSightings] = useState<BirdSighting[]>([]);
     const [simulatedTrees, setSimulatedTrees] = useState<TreeSighting[]>([]);
@@ -271,9 +285,10 @@ const App: React.FC = () => {
     const [sunIntensity, setSunIntensity] = useState(3.0);
     const [sunOrbitSpeed, setSunOrbitSpeed] = useState(0.06);
     const [starRotationSpeed, setStarRotationSpeed] = useState(0.02);
+    const [terrainRelief, setTerrainRelief] = useState(0.18);
     const [isUiVisible, setIsUiVisible] = useState(true);
     const [isExplorePanelOpen, setIsExplorePanelOpen] = useState(false);
-    const [flyToTarget, setFlyToTarget] = useState<{ lat: number; lon: number } | null>(null);
+    const [flyToTarget, setFlyToTarget] = useState<{ lat: number; lon: number; ts?: number } | null>(null);
     const [celestialFlyToTarget, setCelestialFlyToTarget] = useState<CelestialTarget | null>(null);
     const [brokenStationIds, setBrokenStationIds] = useState<Set<string>>(new Set());
     const audioRef = useRef<HTMLAudioElement>(null);
@@ -317,8 +332,18 @@ const App: React.FC = () => {
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
     const [chatRole, setChatRole] = useState<ChatRoleId>('guide');
     const [chatModel, setChatModel] = useState<ChatModelId>('gemini-4-hydrogen');
+    const [chatUseMaps, setChatUseMaps] = useState<boolean>(true);
     const [isChatStreaming, setIsChatStreaming] = useState(false);
     const [chatError, setChatError] = useState<string | null>(null);
+    const [isLocatingViaMaps, setIsLocatingViaMaps] = useState(false);
+    const [mapsLocateResult, setMapsLocateResult] = useState<{
+        targetKey: string;
+        text: string;
+        lat: number | null;
+        lon: number | null;
+        mapsLinks: MapsGroundingLink[];
+        error?: string;
+    } | null>(null);
     const [cameraViewPreset, setCameraViewPreset] = useState<CameraViewPreset>('earth');
     const [videoHistory, setVideoHistory] = useState<VideoCreationRecord[]>([]);
     const chatAbortRef = useRef<AbortController | null>(null);
@@ -430,17 +455,138 @@ const App: React.FC = () => {
         return Array.from(speciesMap.entries()).map(([scientific, common]) => ({ scientific, common })).sort((a, b) => a.common.localeCompare(b.common));
     }, [birdSightings]);
 
+    const uniqueCountries = useMemo(() => {
+        const set = new Set<string>();
+        allStations.forEach(s => {
+            if (s.country && s.country.trim()) set.add(s.country.trim());
+        });
+        return Array.from(set).sort((a, b) => a.localeCompare(b));
+    }, [allStations]);
+
     const filteredRadioStationsForSearch = useMemo(() => {
-        const { text } = filters.radio;
+        const { text, country, genre } = filters.radio;
         const textLower = text.trim().toLowerCase();
-        if (!textLower) return allStations;
-        return allStations.filter(station =>
-            station.name.toLowerCase().includes(textLower) ||
-            station.country.toLowerCase().includes(textLower) ||
-            (station.state && station.state.toLowerCase().includes(textLower)) ||
-            (station.tags && station.tags.toLowerCase().includes(textLower))
-        );
+        return allStations.filter(station => {
+            if (country !== 'all' && station.country !== country) return false;
+            if (genre !== 'all' && !(station.tags || '').toLowerCase().includes(genre.toLowerCase())) return false;
+            if (!textLower) return true;
+            return (
+                station.name.toLowerCase().includes(textLower) ||
+                station.country.toLowerCase().includes(textLower) ||
+                (station.state && station.state.toLowerCase().includes(textLower)) ||
+                (station.tags && station.tags.toLowerCase().includes(textLower))
+            );
+        });
     }, [allStations, filters.radio]);
+
+    const handleRadioCountryChange = useCallback((country: string) => {
+        setFilters(f => ({ ...f, radio: { ...f.radio, country } }));
+        if (country !== 'all') {
+            const center = getCountryCenter(country);
+            if (center) {
+                setFlyToTarget({ lat: center.lat, lon: center.lon, ts: Date.now() });
+                setStatusMessage(`Centered on ${country}`);
+            } else {
+                const matching = allStations.find(s => s.country === country);
+                if (matching) {
+                    setFlyToTarget({ lat: matching.geo_lat, lon: matching.geo_long, ts: Date.now() });
+                }
+            }
+        }
+    }, [allStations]);
+
+    const handleShowLocation = useCallback(() => {
+        if (typeof navigator === 'undefined' || !navigator.geolocation) {
+            setStatusMessage('Browser geolocation is unavailable.');
+            return;
+        }
+        setStatusMessage('Locating your coordinates...');
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const coords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+                setUserLocation(coords);
+                setFlyToTarget({ ...coords, ts: Date.now() });
+                setStatusMessage(`Centered on your position (${coords.lat.toFixed(2)}°, ${coords.lon.toFixed(2)}°)`);
+            },
+            () => {
+                setStatusMessage('Location access declined.');
+            },
+            { enableHighAccuracy: false, timeout: 6000 }
+        );
+    }, []);
+
+    const handleLocateViaMaps = useCallback(async (opts: {
+        stationId?: string;
+        stationName?: string;
+        country?: string;
+        state?: string;
+        lat?: number;
+        lon?: number;
+    }) => {
+        const targetKey = opts.stationId ? opts.stationId : `country:${opts.country || ''}`;
+        setIsLocatingViaMaps(true);
+        try {
+            const res = await fetch('/api/maps/locate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    stationName: opts.stationName,
+                    country: opts.country,
+                    state: opts.state,
+                    lat: opts.lat ?? userLocation?.lat,
+                    lon: opts.lon ?? userLocation?.lon,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data?.error || `Maps grounding failed (${res.status})`);
+            }
+            const resolvedLat = typeof data.lat === 'number' ? data.lat : null;
+            const resolvedLon = typeof data.lon === 'number' ? data.lon : null;
+            const links: MapsGroundingLink[] = Array.isArray(data.mapsLinks) ? data.mapsLinks : [];
+
+            setMapsLocateResult({
+                targetKey,
+                text: data.text || '',
+                lat: resolvedLat,
+                lon: resolvedLon,
+                mapsLinks: links,
+            });
+
+            if (resolvedLat !== null && resolvedLon !== null) {
+                if (opts.stationId) {
+                    setStationCoordOverrides(prev => {
+                        const next = { ...prev, [opts.stationId!]: { lat: resolvedLat, lon: resolvedLon } };
+                        try {
+                            window.sessionStorage.setItem('healed_station_coords_v1', JSON.stringify(next));
+                        } catch {
+                            // ignore storage quota errors
+                        }
+                        return next;
+                    });
+                    setPinnedData(prev =>
+                        prev && prev.type === 'radio' && prev.id === opts.stationId
+                            ? { ...prev, lat: resolvedLat, lon: resolvedLon }
+                            : prev
+                    );
+                }
+                setFlyToTarget({ lat: resolvedLat, lon: resolvedLon, ts: Date.now() });
+                setStatusMessage(`Maps verified: ${opts.stationName || opts.country} (${resolvedLat.toFixed(2)}°, ${resolvedLon.toFixed(2)}°)`);
+            }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Unable to reach Google Maps Grounding.';
+            setMapsLocateResult({
+                targetKey,
+                text: '',
+                lat: null,
+                lon: null,
+                mapsLinks: [],
+                error: msg,
+            });
+        } finally {
+            setIsLocatingViaMaps(false);
+        }
+    }, [userLocation]);
 
     const handleNewSighting = useCallback(async (sighting: BirdSighting) => {
         sighting.id = Date.now() + Math.random();
@@ -891,6 +1037,15 @@ const App: React.FC = () => {
         chatAbortRef.current = controller;
 
         try {
+            const activeLat =
+                (pinnedData && 'lat' in pinnedData && typeof pinnedData.lat === 'number' ? pinnedData.lat : undefined) ??
+                currentStation?.geo_lat ??
+                userLocation?.lat;
+            const activeLon =
+                (pinnedData && 'lon' in pinnedData && typeof pinnedData.lon === 'number' ? pinnedData.lon : undefined) ??
+                currentStation?.geo_long ??
+                userLocation?.lon;
+
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -901,6 +1056,9 @@ const App: React.FC = () => {
                     role: chatRole,
                     model: chatModel,
                     context: buildChatContext(),
+                    useMapsGrounding: chatUseMaps,
+                    lat: activeLat,
+                    lon: activeLon,
                 }),
             });
 
@@ -919,6 +1077,7 @@ const App: React.FC = () => {
             const decoder = new TextDecoder();
             let buffer = '';
             let accumulated = '';
+            let collectedMapsLinks: MapsGroundingLink[] = [];
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -934,7 +1093,7 @@ const App: React.FC = () => {
                         if (!line.startsWith('data: ')) continue;
                         const payloadStr = line.slice(6).trim();
                         if (!payloadStr) continue;
-                        let parsed: { text?: string; error?: string; done?: boolean } | null = null;
+                        let parsed: { text?: string; error?: string; mapsLinks?: MapsGroundingLink[]; done?: boolean } | null = null;
                         try {
                             parsed = JSON.parse(payloadStr);
                         } catch {
@@ -947,6 +1106,12 @@ const App: React.FC = () => {
                             accumulated += parsed.text;
                             setChatMessages(prev =>
                                 prev.map(m => (m.id === assistantId ? { ...m, text: accumulated } : m))
+                            );
+                        }
+                        if (Array.isArray(parsed?.mapsLinks) && parsed.mapsLinks.length > 0) {
+                            collectedMapsLinks = parsed.mapsLinks;
+                            setChatMessages(prev =>
+                                prev.map(m => (m.id === assistantId ? { ...m, mapsLinks: collectedMapsLinks } : m))
                             );
                         }
                     }
@@ -975,7 +1140,7 @@ const App: React.FC = () => {
                 chatAbortRef.current = null;
             }
         }
-    }, [isChatStreaming, chatMessages, chatRole, chatModel, buildChatContext]);
+    }, [isChatStreaming, chatMessages, chatRole, chatModel, chatUseMaps, buildChatContext, pinnedData, currentStation, userLocation]);
 
     const handleClearChat = useCallback(() => {
         if (chatAbortRef.current) {
@@ -1053,6 +1218,7 @@ const App: React.FC = () => {
                 isTreeLocationPickerMode={isTreeLocationPickerMode}
                 onTreeLocationPick={l => { setNewTreeLocation(l); setIsTreeLocationPickerMode(false); setIsTreeSubmissionModalOpen(true); }}
                 timescape={timescape}
+                terrainRelief={terrainRelief}
             />
             {(isLocationPickerMode || isTreeLocationPickerMode) && (
                 <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[80] bg-blue-600/95 text-white px-5 py-2.5 rounded-full text-xs font-black uppercase tracking-widest shadow-2xl border border-white/20 flex items-center gap-3">
@@ -1069,9 +1235,12 @@ const App: React.FC = () => {
                 </div>
             )}
             <UI
-                statusMessage={statusMessage} totalSubmissions={totalSubmissions} latestSubmission={latestSubmission} sidebarSightings={sidebarSightings} treeSightings={treeSightings} inatObservations={inatObservations} pinnedData={pinnedData} onCloseInfoPanel={() => setPinnedData(null)} filters={filters} uniqueBirdSpecies={uniqueBirdSpecies} uniqueRadioStations={allStations} filteredRadioStationsForSearch={filteredRadioStationsForSearch} uniqueCountries={[]} uniqueGenres={[]} liveBirdCount={birdSightings.length} onShowLocation={() => {}} userLocation={userLocation} onAttractBirds={() => {}} isAttracting={false} currentStation={currentStation} isPlaying={isPlaying} isAudioLoading={isAudioLoading} volume={volume} onPlayPause={handlePlayPause} onVolumeChange={(v) => { setVolume(v); if(audioRef.current) audioRef.current.volume = v; }} audioError={audioError} audioContextRef={{current: null}} audioAnalyserRef={{current: null}} isStationLocked={isStationLocked} onToggleLock={() => setIsStationLocked(!isStationLocked)} isAboutModalOpen={isAboutModalOpen} onOpenAboutModal={() => setIsAboutModalOpen(true)} onCloseAboutModal={() => setIsAboutModalOpen(false)} isSoundscapeMode={false} onToggleSoundscapeMode={() => {}} weatherPreset={weatherPreset} onWeatherPresetChange={setWeatherPreset} sunIntensity={sunIntensity} onSunIntensityChange={setSunIntensity} sunOrbitSpeed={sunOrbitSpeed} onSunOrbitSpeedChange={setSunOrbitSpeed} starRotationSpeed={starRotationSpeed} onStarRotationSpeedChange={setStarRotationSpeed} isUiVisible={isUiVisible} onToggleUIVisibility={() => setIsUiVisible(v => !v)} onToggleExplorePanel={() => setIsExplorePanelOpen(!isExplorePanelOpen)} queue={[]} onRemoveFromQueue={() => {}} onSelectAndPlayStation={(id) => { const s = allStations.find(st => st.stationuuid === id); if (s) { handleStationClick({ id: s.stationuuid, lat: s.geo_lat, lon: s.geo_long, type: 'radio', title: s.name, place: s.state || s.country, url: s.url_resolved, country: s.country, state: s.state, tags: s.tags }); setFlyToTarget({ lat: s.geo_lat, lon: s.geo_long }); } }} onSelectAndFindBird={(n) => {}} onFlyToLocation={(lat, lon) => setFlyToTarget({lat, lon})} onSelectCelestialTarget={handleSelectCelestialTarget} favoriteStations={favoriteStations} onToggleFavorite={handleToggleFavorite} onRadioTextChange={t => setFilters(f => ({ ...f, radio: { ...f.radio, text: t } }))} onRadioCountryChange={() => {}} onRadioGenreChange={() => {}} onBirdNameChange={() => {}} onBirdSelect={() => {}} activeTab={activeTab} onActiveTabChange={setActiveTab} brokenStationIds={brokenStationIds} onOpenSubmissionModal={() => setIsSubmissionModalOpen(true)} isSubmissionModalOpen={isSubmissionModalOpen} onCloseSubmissionModal={() => setIsSubmissionModalOpen(false)} onStationSubmit={() => {}} newStationData={newStationData} setNewStationData={setNewStationData} onSetPickerMode={() => { setIsSubmissionModalOpen(false); setIsLocationPickerMode(true); }} onOpenTreeSubmissionModal={() => setIsTreeSubmissionModalOpen(true)} timescape={timescape} onTimescapeChange={setTimescape}
+                statusMessage={statusMessage} totalSubmissions={totalSubmissions} latestSubmission={latestSubmission} sidebarSightings={sidebarSightings} treeSightings={treeSightings} inatObservations={inatObservations} pinnedData={pinnedData} onCloseInfoPanel={() => setPinnedData(null)} filters={filters} uniqueBirdSpecies={uniqueBirdSpecies} uniqueRadioStations={allStations} filteredRadioStationsForSearch={filteredRadioStationsForSearch} uniqueCountries={uniqueCountries} uniqueGenres={[]} liveBirdCount={birdSightings.length} onShowLocation={handleShowLocation} userLocation={userLocation} onAttractBirds={() => {}} isAttracting={false} currentStation={currentStation} isPlaying={isPlaying} isAudioLoading={isAudioLoading} volume={volume} onPlayPause={handlePlayPause} onVolumeChange={(v) => { setVolume(v); if(audioRef.current) audioRef.current.volume = v; }} audioError={audioError} audioContextRef={{current: null}} audioAnalyserRef={{current: null}} isStationLocked={isStationLocked} onToggleLock={() => setIsStationLocked(!isStationLocked)} isAboutModalOpen={isAboutModalOpen} onOpenAboutModal={() => setIsAboutModalOpen(true)} onCloseAboutModal={() => setIsAboutModalOpen(false)} isSoundscapeMode={false} onToggleSoundscapeMode={() => {}} weatherPreset={weatherPreset} onWeatherPresetChange={setWeatherPreset} sunIntensity={sunIntensity} onSunIntensityChange={setSunIntensity} sunOrbitSpeed={sunOrbitSpeed} onSunOrbitSpeedChange={setSunOrbitSpeed} starRotationSpeed={starRotationSpeed} onStarRotationSpeedChange={setStarRotationSpeed} isUiVisible={isUiVisible} onToggleUIVisibility={() => setIsUiVisible(v => !v)} onToggleExplorePanel={() => setIsExplorePanelOpen(!isExplorePanelOpen)} queue={[]} onRemoveFromQueue={() => {}} onSelectAndPlayStation={(id) => { const s = allStations.find(st => st.stationuuid === id); if (s) { handleStationClick({ id: s.stationuuid, lat: s.geo_lat, lon: s.geo_long, type: 'radio', title: s.name, place: s.state || s.country, url: s.url_resolved, country: s.country, state: s.state, tags: s.tags }); setFlyToTarget({ lat: s.geo_lat, lon: s.geo_long, ts: Date.now() }); } }} onSelectAndFindBird={(n) => {}} onFlyToLocation={(lat, lon) => setFlyToTarget({lat, lon, ts: Date.now()})} onSelectCelestialTarget={handleSelectCelestialTarget} favoriteStations={favoriteStations} onToggleFavorite={handleToggleFavorite} onRadioTextChange={t => setFilters(f => ({ ...f, radio: { ...f.radio, text: t } }))} onRadioCountryChange={handleRadioCountryChange} onRadioGenreChange={g => setFilters(f => ({ ...f, radio: { ...f.radio, genre: g } }))} onBirdNameChange={() => {}} onBirdSelect={() => {}} activeTab={activeTab} onActiveTabChange={setActiveTab} brokenStationIds={brokenStationIds} onOpenSubmissionModal={() => setIsSubmissionModalOpen(true)} isSubmissionModalOpen={isSubmissionModalOpen} onCloseSubmissionModal={() => setIsSubmissionModalOpen(false)} onStationSubmit={() => {}} newStationData={newStationData} setNewStationData={setNewStationData} onSetPickerMode={() => { setIsSubmissionModalOpen(false); setIsLocationPickerMode(true); }} onOpenTreeSubmissionModal={() => setIsTreeSubmissionModalOpen(true)} timescape={timescape} onTimescapeChange={setTimescape}
                 chatMessages={chatMessages} chatRole={chatRole} chatModel={chatModel} isChatStreaming={isChatStreaming} chatError={chatError} viewerContext={buildChatContext()} onChatRoleChange={setChatRole} onChatModelChange={setChatModel} onSendChatMessage={handleSendChatMessage} onClearChat={handleClearChat} onDismissChatError={() => setChatError(null)}
                 cameraViewPreset={cameraViewPreset} onCameraViewPresetChange={setCameraViewPreset} videoHistory={videoHistory} onVideoGenerated={handleVideoGenerated} onDeleteVideoHistoryItem={handleDeleteVideoHistoryItem} onSelectSpeciesPoint={(pt) => setPinnedData(pt)}
+                terrainRelief={terrainRelief} onTerrainReliefChange={setTerrainRelief}
+                onLocateViaMaps={handleLocateViaMaps} isLocatingViaMaps={isLocatingViaMaps} mapsLocateResult={mapsLocateResult}
+                chatUseMaps={chatUseMaps} onChatUseMapsChange={setChatUseMaps}
             />
             <TreeSubmissionModal isOpen={isTreeSubmissionModalOpen && !isTreeLocationPickerMode} onClose={() => setIsTreeSubmissionModalOpen(false)} onSubmit={handleTreeSubmit} onSetPickerMode={() => { setIsTreeSubmissionModalOpen(false); setIsTreeLocationPickerMode(true); }} isIdentifying={isIdentifyingTree} location={newTreeLocation} />
             <SubmissionModal isOpen={isSubmissionModalOpen && !isLocationPickerMode} onClose={() => setIsSubmissionModalOpen(false)} onSubmit={handleStationSubmit} newStationData={newStationData} setNewStationData={setNewStationData} onSetPickerMode={() => { setIsSubmissionModalOpen(false); setIsLocationPickerMode(true); }} />

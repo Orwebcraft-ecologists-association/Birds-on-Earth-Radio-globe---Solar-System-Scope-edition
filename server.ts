@@ -106,6 +106,18 @@ interface ChatRequestBody {
     role?: string;
     model?: string;
     context?: string;
+    useMapsGrounding?: boolean;
+    lat?: number;
+    lon?: number;
+}
+
+interface MapsLocateRequestBody {
+    query?: string;
+    stationName?: string;
+    country?: string;
+    state?: string;
+    lat?: number;
+    lon?: number;
 }
 
 interface VideoGenerateRequestBody {
@@ -424,15 +436,54 @@ function supportsThinkingLevel(model: string): boolean {
     return model.startsWith('gemini-3') || model.startsWith('gemini-4');
 }
 
+function extractMapsGroundingLinks(
+    response: GenerateContentResponse
+): { title: string; uri: string; snippets?: string[] }[] {
+    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (!Array.isArray(chunks)) return [];
+    const seen = new Set<string>();
+    const links: { title: string; uri: string; snippets?: string[] }[] = [];
+    for (const chunk of chunks as any[]) {
+        const maps = chunk?.maps;
+        if (maps?.uri && typeof maps.uri === 'string' && !seen.has(maps.uri)) {
+            seen.add(maps.uri);
+            const rawSnippets = Array.isArray(maps.placeAnswerSources?.reviewSnippets)
+                ? maps.placeAnswerSources.reviewSnippets
+                      .map((s: any) => (typeof s?.content === 'string' ? s.content.trim() : typeof s === 'string' ? s.trim() : ''))
+                      .filter(Boolean)
+                      .slice(0, 2)
+                : undefined;
+            links.push({
+                title: typeof maps.title === 'string' && maps.title.trim() ? maps.title.trim() : 'Open in Google Maps',
+                uri: maps.uri,
+                ...(rawSnippets && rawSnippets.length > 0 ? { snippets: rawSnippets } : {}),
+            });
+        }
+    }
+    return links;
+}
+
 async function createStreamWithRetry(
     ai: GoogleGenAI,
     model: string,
     systemInstruction: string,
     history: Content[],
-    message: string
+    message: string,
+    mapsConfig?: { enabled: boolean; lat?: number; lon?: number }
 ) {
     const maxAttempts = 2;
     let lastErr: unknown;
+
+    const hasLatLon =
+        mapsConfig?.enabled &&
+        typeof mapsConfig.lat === 'number' &&
+        typeof mapsConfig.lon === 'number' &&
+        Number.isFinite(mapsConfig.lat) &&
+        Number.isFinite(mapsConfig.lon) &&
+        mapsConfig.lat >= -90 &&
+        mapsConfig.lat <= 90 &&
+        mapsConfig.lon >= -180 &&
+        mapsConfig.lon <= 180;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
@@ -441,7 +492,17 @@ async function createStreamWithRetry(
                 history,
                 config: {
                     systemInstruction,
-                    ...(supportsThinkingLevel(model)
+                    ...(mapsConfig?.enabled ? { tools: [{ googleMaps: {} }] } : {}),
+                    ...(hasLatLon
+                        ? {
+                              toolConfig: {
+                                  retrievalConfig: {
+                                      latLng: { latitude: mapsConfig!.lat!, longitude: mapsConfig!.lon! },
+                                  },
+                              },
+                          }
+                        : {}),
+                    ...(!mapsConfig?.enabled && supportsThinkingLevel(model)
                         ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
                         : {}),
                 },
@@ -717,6 +778,116 @@ async function startServer() {
         res.status(formatted.status).json({ error: formatted.message });
     });
 
+    app.post('/api/maps/locate', async (req: Request, res: Response) => {
+        const body = (req.body || {}) as MapsLocateRequestBody;
+        const query = typeof body.query === 'string' ? body.query.trim().slice(0, 400) : '';
+        const stationName = typeof body.stationName === 'string' ? body.stationName.trim().slice(0, 160) : '';
+        const country = typeof body.country === 'string' ? body.country.trim().slice(0, 100) : '';
+        const state = typeof body.state === 'string' ? body.state.trim().slice(0, 100) : '';
+
+        if (!query && !stationName && !country) {
+            res.status(400).json({ error: 'A location query, station name, or country is required.' });
+            return;
+        }
+
+        const apiKey = getApiKey();
+        const ai = getAiClient();
+        if (!ai || !apiKey) {
+            res.status(503).json({
+                error: 'Gemini API key is not configured. Please set GEMINI_API_KEY in Settings > Secrets.',
+            });
+            return;
+        }
+
+        const hasBiasCoords =
+            typeof body.lat === 'number' &&
+            typeof body.lon === 'number' &&
+            Number.isFinite(body.lat) &&
+            Number.isFinite(body.lon) &&
+            body.lat >= -90 &&
+            body.lat <= 90 &&
+            body.lon >= -180 &&
+            body.lon <= 180;
+
+        const targetDesc = stationName
+            ? `radio station "${stationName}" located in ${state ? `${state}, ` : ''}${country || 'Earth'}`
+            : query || `${state ? `${state}, ` : ''}${country}`;
+
+        const prompt =
+            `Use Google Maps to find the exact real-world geographic location, city/region, notable terrain/geography, and broadcast/place context for ${targetDesc}.\n` +
+            `Provide a concise 2-3 sentence summary in plain Markdown.\n` +
+            `On a final separate line, include exact decimal coordinates formatted strictly as:\n` +
+            `Coordinates: <latitude>, <longitude>`;
+
+        const candidateModels = ['gemini-4-hydrogen', 'gemini-2.5-flash'];
+        let lastErr: unknown = null;
+
+        for (const model of candidateModels) {
+            try {
+                const response = await ai.models.generateContent({
+                    model,
+                    contents: prompt,
+                    config: {
+                        tools: [{ googleMaps: {} }],
+                        ...(hasBiasCoords
+                            ? {
+                                  toolConfig: {
+                                      retrievalConfig: {
+                                          latLng: { latitude: body.lat!, longitude: body.lon! },
+                                      },
+                                  },
+                              }
+                            : {}),
+                    },
+                });
+
+                const text = (response.text || '').trim();
+                const mapsLinks = extractMapsGroundingLinks(response);
+
+                let resolvedLat: number | null = null;
+                let resolvedLon: number | null = null;
+                const coordMatch = text.match(/Coordinates\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i);
+                if (coordMatch) {
+                    const pLat = parseFloat(coordMatch[1]);
+                    const pLon = parseFloat(coordMatch[2]);
+                    if (
+                        Number.isFinite(pLat) &&
+                        Number.isFinite(pLon) &&
+                        pLat >= -90 &&
+                        pLat <= 90 &&
+                        pLon >= -180 &&
+                        pLon <= 180 &&
+                        !(Math.abs(pLat) < 0.01 && Math.abs(pLon) < 0.01)
+                    ) {
+                        resolvedLat = pLat;
+                        resolvedLon = pLon;
+                    }
+                }
+
+                res.json({
+                    text,
+                    lat: resolvedLat,
+                    lon: resolvedLon,
+                    mapsLinks,
+                    model,
+                });
+                return;
+            } catch (err) {
+                lastErr = err;
+                if (isTryNextFreeModelError(err)) {
+                    console.warn(`Maps grounding model '${model}' unavailable, trying fallback...`);
+                    continue;
+                }
+                const formatted = formatGeminiError(err, 'chat');
+                res.status(formatted.status).json({ error: formatted.message });
+                return;
+            }
+        }
+
+        const formatted = formatGeminiError(lastErr, 'chat');
+        res.status(formatted.status).json({ error: formatted.message });
+    });
+
     app.post('/api/chat', async (req: Request, res: Response) => {
         const body = (req.body || {}) as ChatRequestBody;
         const message = typeof body.message === 'string' ? body.message.trim() : '';
@@ -741,6 +912,13 @@ async function startServer() {
 
         const keyHash = hashKey(apiKey);
         const requestedModel = body.model && ALLOWED_CHAT_MODELS.has(body.model) ? body.model : 'gemini-4-hydrogen';
+        const useMapsGrounding =
+            body.useMapsGrounding === true ||
+            (body.useMapsGrounding !== false &&
+                /\b(where is|location|coordinates|map|maps|country|city|terrain|mountain|near me|nearby|places|region)\b/i.test(
+                    message
+                ));
+
         const baseInstruction = ROLE_INSTRUCTIONS[body.role || 'guide'] || ROLE_INSTRUCTIONS.guide;
         const contextNote =
             typeof body.context === 'string' && body.context.trim()
@@ -750,13 +928,15 @@ async function startServer() {
         const history = sanitizeHistory(body.history);
 
         const cachedChat = workingChatModelByKey.get(keyHash);
-        const candidateModels = Array.from(
-            new Set([
-                requestedModel,
-                ...(cachedChat ? [cachedChat] : []),
-                ...FALLBACK_CHAT_MODELS,
-            ])
-        );
+        const candidateModels = useMapsGrounding
+            ? Array.from(new Set(['gemini-4-hydrogen', 'gemini-2.5-flash']))
+            : Array.from(
+                  new Set([
+                      requestedModel,
+                      ...(cachedChat ? [cachedChat] : []),
+                      ...FALLBACK_CHAT_MODELS,
+                  ])
+              );
 
         try {
             let stream: Awaited<ReturnType<typeof createStreamWithRetry>> | null = null;
@@ -764,8 +944,17 @@ async function startServer() {
 
             for (const candidateModel of candidateModels) {
                 try {
-                    stream = await createStreamWithRetry(ai, candidateModel, systemInstruction, history, message);
-                    workingChatModelByKey.set(keyHash, candidateModel);
+                    stream = await createStreamWithRetry(
+                        ai,
+                        candidateModel,
+                        systemInstruction,
+                        history,
+                        message,
+                        useMapsGrounding ? { enabled: true, lat: body.lat, lon: body.lon } : undefined
+                    );
+                    if (!useMapsGrounding) {
+                        workingChatModelByKey.set(keyHash, candidateModel);
+                    }
                     break;
                 } catch (err) {
                     lastErr = err;
@@ -785,12 +974,23 @@ async function startServer() {
             res.setHeader('Connection', 'keep-alive');
             res.flushHeaders?.();
 
+            const collectedLinksMap = new Map<string, { title: string; uri: string; snippets?: string[] }>();
+
             for await (const chunk of stream) {
                 const c = chunk as GenerateContentResponse;
                 const text = c.text || '';
                 if (text) {
                     res.write(`data: ${JSON.stringify({ text })}\n\n`);
                 }
+                for (const link of extractMapsGroundingLinks(c)) {
+                    if (!collectedLinksMap.has(link.uri)) {
+                        collectedLinksMap.set(link.uri, link);
+                    }
+                }
+            }
+
+            if (collectedLinksMap.size > 0) {
+                res.write(`data: ${JSON.stringify({ mapsLinks: Array.from(collectedLinksMap.values()) })}\n\n`);
             }
 
             res.write(`data: ${JSON.stringify({ done: true })}\n\n`);

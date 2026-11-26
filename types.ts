@@ -144,12 +144,19 @@ export type ChatRoleId = 'guide' | 'ornithologist' | 'astronomer' | 'radio-curat
 
 export type ChatModelId = 'gemini-4-hydrogen' | 'gemini-3.1-flash-lite';
 
+export interface MapsGroundingLink {
+    title: string;
+    uri: string;
+    snippets?: string[];
+}
+
 export interface ChatMessage {
     id: string;
     role: 'user' | 'model';
     text: string;
     timestamp: number;
     isError?: boolean;
+    mapsLinks?: MapsGroundingLink[];
 }
 
 export type VideoMode = 'text' | 'image';
