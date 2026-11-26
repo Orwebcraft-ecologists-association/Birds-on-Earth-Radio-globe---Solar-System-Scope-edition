@@ -142,6 +142,8 @@ interface UIProps {
     } | null;
     chatUseMaps?: boolean;
     onChatUseMapsChange?: (enabled: boolean) => void;
+    viewMode?: 'globe' | 'map';
+    onViewModeChange?: (mode: 'globe' | 'map') => void;
 }
 
 const InfoPanel: React.FC<{
@@ -341,25 +343,27 @@ const InfoPanel: React.FC<{
                     <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
                         <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
                             <span>Coords: {data.lat.toFixed(2)}°, {data.lon.toFixed(2)}°</span>
-                            {onLocateViaMaps && (
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        void onLocateViaMaps({
-                                            stationId: data.id,
-                                            stationName: data.title,
-                                            country: data.country,
-                                            state: data.state,
-                                            lat: data.lat,
-                                            lon: data.lon,
-                                        })
-                                    }
-                                    disabled={isLocatingViaMaps}
-                                    className="px-2 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-500/30 text-[9px] font-black uppercase tracking-wider text-emerald-200 transition-colors disabled:opacity-50"
-                                >
-                                    {isLocatingViaMaps ? 'Locating...' : 'Verify Maps'}
-                                </button>
-                            )}
+                            <div className="flex items-center gap-1.5">
+                                {onLocateViaMaps && (
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            void onLocateViaMaps({
+                                                stationId: data.id,
+                                                stationName: data.title,
+                                                country: data.country,
+                                                state: data.state,
+                                                lat: data.lat,
+                                                lon: data.lon,
+                                            })
+                                        }
+                                        disabled={isLocatingViaMaps}
+                                        className="px-2 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-500/30 text-[9px] font-black uppercase tracking-wider text-emerald-200 transition-colors disabled:opacity-50"
+                                    >
+                                        {isLocatingViaMaps ? 'Locating...' : 'Verify Maps'}
+                                    </button>
+                                )}
+                            </div>
                         </div>
                         {mapsLocateResult && mapsLocateResult.targetKey === data.id && (
                             <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 space-y-1.5">
@@ -465,6 +469,8 @@ export const UI: React.FC<UIProps> = (props) => {
         mapsLocateResult,
         chatUseMaps = true,
         onChatUseMapsChange,
+        viewMode = 'globe',
+        onViewModeChange,
     } = props;
 
     const { user, authReady, authError, signInWithGoogle, signOutUser, clearAuthError } = useFirebaseAuth();
@@ -632,6 +638,20 @@ export const UI: React.FC<UIProps> = (props) => {
                                 Sign In
                             </button>
                         ))}
+                    {onViewModeChange && (
+                        <button
+                            type="button"
+                            onClick={() => onViewModeChange(viewMode === 'map' ? 'globe' : 'map')}
+                            className={`px-3 py-2 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all shadow-xl ${
+                                viewMode === 'map'
+                                    ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-400/50 text-white'
+                                    : 'bg-slate-950/92 hover:bg-emerald-600/30 border-emerald-500/40 text-emerald-300 hover:text-white'
+                            }`}
+                            title={viewMode === 'map' ? 'Switch back to 3D Solar Globe' : 'Open interactive Google Maps view'}
+                        >
+                            {viewMode === 'map' ? '3D Globe' : 'Google Maps'}
+                        </button>
+                    )}
                     <button
                         onClick={onToggleUIVisibility}
                         className="px-3 py-2 bg-slate-950/92 rounded-xl border border-white/15 text-[10px] font-black uppercase tracking-wider text-slate-200 hover:bg-slate-800 transition-all shadow-xl"
@@ -1303,9 +1323,12 @@ export const UI: React.FC<UIProps> = (props) => {
                                     <button
                                         key={preset.id}
                                         type="button"
-                                        onClick={() => onCameraViewPresetChange(preset.id)}
+                                        onClick={() => {
+                                            if (viewMode === 'map') onViewModeChange?.('globe');
+                                            onCameraViewPresetChange(preset.id);
+                                        }}
                                         className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors ${
-                                            cameraViewPreset === preset.id
+                                            viewMode === 'globe' && cameraViewPreset === preset.id
                                                 ? 'bg-cyan-600 text-white'
                                                 : 'bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white'
                                         }`}
@@ -1313,6 +1336,19 @@ export const UI: React.FC<UIProps> = (props) => {
                                         {preset.label}
                                     </button>
                                 ))}
+                                {onViewModeChange && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onViewModeChange(viewMode === 'map' ? 'globe' : 'map')}
+                                        className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors ${
+                                            viewMode === 'map'
+                                                ? 'bg-emerald-600 text-white'
+                                                : 'bg-emerald-600/15 text-emerald-300 hover:bg-emerald-600 hover:text-white'
+                                        }`}
+                                    >
+                                        Maps
+                                    </button>
+                                )}
                             </div>
 
                             <div className="h-5 w-px bg-white/10 flex-shrink-0" />

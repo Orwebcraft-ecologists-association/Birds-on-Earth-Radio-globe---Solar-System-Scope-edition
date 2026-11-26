@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Globe } from './components/Globe';
+import { GoogleMapView } from './components/GoogleMapView';
 import { UI } from './components/UI';
 import { ExplorePanel } from './components/ExplorePanel';
 import TreeSubmissionModal from './components/TreeSubmissionModal';
@@ -345,8 +346,16 @@ const App: React.FC = () => {
         error?: string;
     } | null>(null);
     const [cameraViewPreset, setCameraViewPreset] = useState<CameraViewPreset>('earth');
+    const [viewMode, setViewMode] = useState<'globe' | 'map'>('globe');
+    const [isGmpQuotaExceeded, setIsGmpQuotaExceeded] = useState(false);
     const [videoHistory, setVideoHistory] = useState<VideoCreationRecord[]>([]);
     const chatAbortRef = useRef<AbortController | null>(null);
+
+    useEffect(() => {
+        const handleQuotaExceeded = () => setIsGmpQuotaExceeded(true);
+        window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+        return () => window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+    }, []);
 
     useEffect(() => {
         if (!authReady) return;
@@ -1164,8 +1173,29 @@ const App: React.FC = () => {
         }
     }, [user]);
 
+    const favoriteStationIds = useMemo(
+        () => new Set(favoriteStations.map((s) => s.stationuuid)),
+        [favoriteStations]
+    );
+
     return (
         <div className="relative w-full h-full text-white antialiased bg-black overflow-hidden font-sans">
+            {isGmpQuotaExceeded && (
+                <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-[90] shadow-sm">
+                    <span>
+                        Google Maps Platform quota reached. If you are the app owner, visit{' '}
+                        <a
+                            href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline font-semibold text-amber-950 hover:text-amber-800"
+                        >
+                            maps developer site
+                        </a>{' '}
+                        for instructions to update your account.
+                    </span>
+                </div>
+            )}
             <audio
                 ref={audioRef}
                 onPlay={() => setIsPlaying(true)}
@@ -1234,6 +1264,28 @@ const App: React.FC = () => {
                     </button>
                 </div>
             )}
+            {viewMode === 'map' && (
+                <GoogleMapView
+                    stations={allStations}
+                    filteredStations={filteredRadioStationsForSearch}
+                    selectedCountry={filters.radio.country}
+                    birdSightings={birdSightings}
+                    treeSightings={treeSightings}
+                    inatObservations={inatObservations}
+                    userLocation={userLocation}
+                    currentStation={currentStation}
+                    isPlaying={isPlaying}
+                    isAudioLoading={isAudioLoading}
+                    favoriteIds={favoriteStationIds}
+                    flyToTarget={flyToTarget}
+                    isUiVisible={isUiVisible}
+                    onSelectStation={handleStationClick}
+                    onToggleFavorite={handleToggleFavorite}
+                    onSelectPoint={(d) => setPinnedData(d)}
+                    onFlyGlobeTo={(lat, lon) => setFlyToTarget({ lat, lon, ts: Date.now() })}
+                    onCloseMapView={() => setViewMode('globe')}
+                />
+            )}
             <UI
                 statusMessage={statusMessage} totalSubmissions={totalSubmissions} latestSubmission={latestSubmission} sidebarSightings={sidebarSightings} treeSightings={treeSightings} inatObservations={inatObservations} pinnedData={pinnedData} onCloseInfoPanel={() => setPinnedData(null)} filters={filters} uniqueBirdSpecies={uniqueBirdSpecies} uniqueRadioStations={allStations} filteredRadioStationsForSearch={filteredRadioStationsForSearch} uniqueCountries={uniqueCountries} uniqueGenres={[]} liveBirdCount={birdSightings.length} onShowLocation={handleShowLocation} userLocation={userLocation} onAttractBirds={() => {}} isAttracting={false} currentStation={currentStation} isPlaying={isPlaying} isAudioLoading={isAudioLoading} volume={volume} onPlayPause={handlePlayPause} onVolumeChange={(v) => { setVolume(v); if(audioRef.current) audioRef.current.volume = v; }} audioError={audioError} audioContextRef={{current: null}} audioAnalyserRef={{current: null}} isStationLocked={isStationLocked} onToggleLock={() => setIsStationLocked(!isStationLocked)} isAboutModalOpen={isAboutModalOpen} onOpenAboutModal={() => setIsAboutModalOpen(true)} onCloseAboutModal={() => setIsAboutModalOpen(false)} isSoundscapeMode={false} onToggleSoundscapeMode={() => {}} weatherPreset={weatherPreset} onWeatherPresetChange={setWeatherPreset} sunIntensity={sunIntensity} onSunIntensityChange={setSunIntensity} sunOrbitSpeed={sunOrbitSpeed} onSunOrbitSpeedChange={setSunOrbitSpeed} starRotationSpeed={starRotationSpeed} onStarRotationSpeedChange={setStarRotationSpeed} isUiVisible={isUiVisible} onToggleUIVisibility={() => setIsUiVisible(v => !v)} onToggleExplorePanel={() => setIsExplorePanelOpen(!isExplorePanelOpen)} queue={[]} onRemoveFromQueue={() => {}} onSelectAndPlayStation={(id) => { const s = allStations.find(st => st.stationuuid === id); if (s) { handleStationClick({ id: s.stationuuid, lat: s.geo_lat, lon: s.geo_long, type: 'radio', title: s.name, place: s.state || s.country, url: s.url_resolved, country: s.country, state: s.state, tags: s.tags }); setFlyToTarget({ lat: s.geo_lat, lon: s.geo_long, ts: Date.now() }); } }} onSelectAndFindBird={(n) => {}} onFlyToLocation={(lat, lon) => setFlyToTarget({lat, lon, ts: Date.now()})} onSelectCelestialTarget={handleSelectCelestialTarget} favoriteStations={favoriteStations} onToggleFavorite={handleToggleFavorite} onRadioTextChange={t => setFilters(f => ({ ...f, radio: { ...f.radio, text: t } }))} onRadioCountryChange={handleRadioCountryChange} onRadioGenreChange={g => setFilters(f => ({ ...f, radio: { ...f.radio, genre: g } }))} onBirdNameChange={() => {}} onBirdSelect={() => {}} activeTab={activeTab} onActiveTabChange={setActiveTab} brokenStationIds={brokenStationIds} onOpenSubmissionModal={() => setIsSubmissionModalOpen(true)} isSubmissionModalOpen={isSubmissionModalOpen} onCloseSubmissionModal={() => setIsSubmissionModalOpen(false)} onStationSubmit={() => {}} newStationData={newStationData} setNewStationData={setNewStationData} onSetPickerMode={() => { setIsSubmissionModalOpen(false); setIsLocationPickerMode(true); }} onOpenTreeSubmissionModal={() => setIsTreeSubmissionModalOpen(true)} timescape={timescape} onTimescapeChange={setTimescape}
                 chatMessages={chatMessages} chatRole={chatRole} chatModel={chatModel} isChatStreaming={isChatStreaming} chatError={chatError} viewerContext={buildChatContext()} onChatRoleChange={setChatRole} onChatModelChange={setChatModel} onSendChatMessage={handleSendChatMessage} onClearChat={handleClearChat} onDismissChatError={() => setChatError(null)}
@@ -1241,6 +1293,7 @@ const App: React.FC = () => {
                 terrainRelief={terrainRelief} onTerrainReliefChange={setTerrainRelief}
                 onLocateViaMaps={handleLocateViaMaps} isLocatingViaMaps={isLocatingViaMaps} mapsLocateResult={mapsLocateResult}
                 chatUseMaps={chatUseMaps} onChatUseMapsChange={setChatUseMaps}
+                viewMode={viewMode} onViewModeChange={setViewMode}
             />
             <TreeSubmissionModal isOpen={isTreeSubmissionModalOpen && !isTreeLocationPickerMode} onClose={() => setIsTreeSubmissionModalOpen(false)} onSubmit={handleTreeSubmit} onSetPickerMode={() => { setIsTreeSubmissionModalOpen(false); setIsTreeLocationPickerMode(true); }} isIdentifying={isIdentifyingTree} location={newTreeLocation} />
             <SubmissionModal isOpen={isSubmissionModalOpen && !isLocationPickerMode} onClose={() => setIsSubmissionModalOpen(false)} onSubmit={handleStationSubmit} newStationData={newStationData} setNewStationData={setNewStationData} onSetPickerMode={() => { setIsSubmissionModalOpen(false); setIsLocationPickerMode(true); }} />
