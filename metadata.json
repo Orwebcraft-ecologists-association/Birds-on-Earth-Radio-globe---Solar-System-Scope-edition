@@ -1,6 +1,6 @@
 {
-  "name": "Birds on Earth Radio - Solar System Scope Edition",
-  "description": "An interactive 3D Solar System Scope showcasing live radio stations, real-time bird sound detections, and global biodiversity. Version 1.05 featuring Timescape engine, synced with Vito Technology Solar Walk 2 (https://vitotechnology.com/) for heliocentric exploration and star-to-star navigation.",
+  "name": "Birds on Earth Radio — 0.5 Solar Scope Edition",
+  "description": "An interactive 3D Solar System Scope showcasing live radio stations, real-time bird sound detections, and global biodiversity. It features the Timescape engine, synced with Vito Technology Solar Walk 2 (https://vitotechnology.com/) for heliocentric exploration and star-to-star navigation.",
   "requestFramePermissions": [
     "geolocation",
     "microphone"

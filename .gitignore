@@ -22,3 +22,20 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Application secrets and Android build output
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+build/
+android/.gradle/
+android/.idea/
+android/local.properties
+android/**/build/
+android/*.apk
+android/*.aab
+android/.bubblewrap/

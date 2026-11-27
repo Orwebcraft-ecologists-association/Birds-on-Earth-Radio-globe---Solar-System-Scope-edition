@@ -1,0 +1,169 @@
+name: Build Android APK and App Bundle (TWA)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Build web application
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Check PWA files in the build
+        run: |
+          grep -F 'rel="manifest" href="/manifest.webmanifest"' dist/index.html
+          cmp public/manifest.webmanifest dist/manifest.webmanifest
+          cmp public/icon-192.png dist/icon-192.png
+          cmp public/icon-512.png dist/icon-512.png
+
+  bundle:
+    name: Generate unsigned Android App Bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK and Bubblewrap
+        run: |
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+          npm install --global @bubblewrap/cli@1.27.0
+          mkdir -p ~/.bubblewrap
+          node -p 'JSON.stringify({jdkPath: process.env.JAVA_HOME, androidSdkPath: process.env.ANDROID_HOME})' > ~/.bubblewrap/config.json
+      - name: Generate the Android project from the TWA manifest
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory public > "$RUNNER_TEMP/icon-server.log" 2>&1 &
+          icon_server=$!
+          trap 'kill "$icon_server" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 5 --retry-connrefused --output /dev/null http://127.0.0.1:8765/icon-512.png
+          mkdir -p "$RUNNER_TEMP/android-project"
+          bubblewrap update --skipVersionUpgrade \
+            --manifest="$GITHUB_WORKSPACE/android/twa-manifest.json" \
+            --directory="$RUNNER_TEMP/android-project"
+      - name: Build and check the unsigned bundle
+        working-directory: ${{ runner.temp }}/android-project
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon bundleRelease
+          bundle=app/build/outputs/bundle/release/app-release.aab
+          unzip -tq "$bundle"
+          unzip -Z1 "$bundle" | grep -Fx 'base/manifest/AndroidManifest.xml'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: birds-on-earth-radio-unsigned-aab
+          path: ${{ runner.temp }}/android-project/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Build and verify debug APK for Internal App Sharing
+        working-directory: ${{ runner.temp }}/android-project
+        run: |
+          ./gradlew --no-daemon assembleDebug
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk"
+          cp "$apk" "$RUNNER_TEMP/Birds-on-Earth-Radio-0.5.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: birds-on-earth-radio-internal-sharing-apk
+          path: ${{ runner.temp }}/Birds-on-Earth-Radio-0.5.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  test-sign:
+    name: Sign AAB for Internal app sharing
+    needs: [web, bundle]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/download-artifact@v4
+        with:
+          name: birds-on-earth-radio-unsigned-aab
+      - name: Generate a temporary test key and sign the bundle
+        shell: bash
+        run: |
+          key_directory="$(mktemp -d "$RUNNER_TEMP/test-signing.XXXXXXXX")"
+          trap 'rm -rf "$key_directory"' EXIT
+          export TEST_KEY_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$TEST_KEY_PASSWORD"
+          keytool -genkeypair -noprompt \
+            -keystore "$key_directory/test-key.p12" -storetype PKCS12 \
+            -storepass:env TEST_KEY_PASSWORD -keypass:env TEST_KEY_PASSWORD \
+            -alias internal-sharing-test -keyalg RSA -keysize 2048 -validity 365 \
+            -dname "CN=Birds on Earth Radio Internal Sharing Test"
+          jarsigner -keystore "$key_directory/test-key.p12" -storetype PKCS12 \
+            -storepass:env TEST_KEY_PASSWORD -keypass:env TEST_KEY_PASSWORD \
+            -signedjar birds-on-earth-radio-internal-sharing.aab \
+            app-release.aab internal-sharing-test
+          jarsigner -verify -verbose -certs birds-on-earth-radio-internal-sharing.aab > verification.txt
+          grep -F 'jar verified.' verification.txt
+          keytool -printcert -jarfile birds-on-earth-radio-internal-sharing.aab
+          printf '%s\n' 'Download birds-on-earth-radio-internal-sharing-aab for Google Play Internal app sharing.' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' 'This bundle uses a temporary test certificate. The keystore is deleted at the end of the signing step.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: birds-on-earth-radio-internal-sharing-aab
+          path: birds-on-earth-radio-internal-sharing.aab
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    name: Sign the AAB with the Play upload key
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch
+    needs: [web, bundle]
+    environment: android-signing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/download-artifact@v4
+        with:
+          name: birds-on-earth-radio-unsigned-aab
+      - name: Sign and verify the bundle
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          : "${ANDROID_KEYSTORE_BASE64:?Set the Android upload keystore in the android-signing environment}"
+          : "${ANDROID_KEYSTORE_PASSWORD:?Set the Android keystore password}"
+          : "${ANDROID_KEY_PASSWORD:?Set the Android key password}"
+          : "${ANDROID_KEY_ALIAS:?Set the Android key alias}"
+          keystore="$(mktemp "$RUNNER_TEMP/android-keystore.XXXXXXXX")"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          jarsigner -keystore "$keystore" -storepass:env ANDROID_KEYSTORE_PASSWORD \
+            -keypass:env ANDROID_KEY_PASSWORD -signedjar birds-on-earth-radio-play.aab \
+            app-release.aab "$ANDROID_KEY_ALIAS"
+          jarsigner -verify birds-on-earth-radio-play.aab
+      - uses: actions/upload-artifact@v4
+        with:
+          name: birds-on-earth-radio-play-aab
+          path: birds-on-earth-radio-play.aab
+          if-no-files-found: error
+          retention-days: 7

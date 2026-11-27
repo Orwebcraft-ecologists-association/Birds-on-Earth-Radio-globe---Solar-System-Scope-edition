@@ -1,0 +1,22 @@
+{
+  "packageId": "com.orwebcraft.birdsonearthradio",
+  "host": "birds-on-earth-radio.ai.studio",
+  "name": "Birds on Earth Radio — 0.5 Solar Scope Edition",
+  "launcherName": "Birds on Earth Radio",
+  "startUrl": "/",
+  "display": "standalone",
+  "themeColor": "#000000",
+  "navigationColor": "#000000",
+  "backgroundColor": "#000000",
+  "enableNotifications": false,
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "upload-key.jks",
+    "alias": "upload"
+  },
+  "appVersion": "0.5",
+  "appVersionCode": 1,
+  "fallbackType": "customtabs",
+  "webManifestUrl": "https://birds-on-earth-radio.ai.studio/manifest.webmanifest",
+  "iconUrl": "http://127.0.0.1:8765/icon-512.png"
+}
