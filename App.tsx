@@ -333,7 +333,7 @@ const App: React.FC = () => {
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
     const [chatRole, setChatRole] = useState<ChatRoleId>('guide');
     const [chatModel, setChatModel] = useState<ChatModelId>('gemini-4-hydrogen');
-    const [chatUseMaps, setChatUseMaps] = useState<boolean>(true);
+    const [chatUseMaps, setChatUseMaps] = useState<boolean>(false);
     const [isChatStreaming, setIsChatStreaming] = useState(false);
     const [chatError, setChatError] = useState<string | null>(null);
     const [isLocatingViaMaps, setIsLocatingViaMaps] = useState(false);
@@ -1074,8 +1074,16 @@ const App: React.FC = () => {
             if (!response.ok || !response.body) {
                 let errMsg = `Request failed (${response.status})`;
                 try {
-                    const errJson = await response.json();
-                    if (errJson?.error) errMsg = errJson.error;
+                    const rawBody = await response.text();
+                    if (rawBody) {
+                        try {
+                            const errJson = JSON.parse(rawBody);
+                            if (errJson?.error) errMsg = errJson.error;
+                        } catch {
+                            const snippet = rawBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+                            if (snippet) errMsg = `Request failed (${response.status}): ${snippet}`;
+                        }
+                    }
                 } catch {
                     // keep fallback error message
                 }

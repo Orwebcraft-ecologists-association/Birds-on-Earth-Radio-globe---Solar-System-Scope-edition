@@ -467,7 +467,7 @@ export const UI: React.FC<UIProps> = (props) => {
         onLocateViaMaps,
         isLocatingViaMaps,
         mapsLocateResult,
-        chatUseMaps = true,
+        chatUseMaps = false,
         onChatUseMapsChange,
         viewMode = 'globe',
         onViewModeChange,

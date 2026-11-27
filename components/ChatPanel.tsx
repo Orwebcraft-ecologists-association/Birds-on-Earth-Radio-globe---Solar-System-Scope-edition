@@ -73,7 +73,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     onChatSizeChange,
     onRoleChange,
     onModelChange,
-    useMapsGrounding = true,
+    useMapsGrounding = false,
     onToggleMapsGrounding,
     onSendMessage,
     onClearChat,

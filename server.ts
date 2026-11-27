@@ -17,9 +17,8 @@ const ALLOWED_CHAT_MODELS = new Set(['gemini-4-hydrogen', 'gemini-3.1-flash-lite
 const FALLBACK_CHAT_MODELS = [
     'gemini-4-hydrogen',
     'gemini-3.8-flash',
-    'gemini-3-flash-preview',
     'gemini-3.1-flash-lite',
-    'gemini-2.5-flash',
+    'gemini-3-flash-preview',
     'gemini-2.5-flash-lite',
 ];
 const FALLBACK_INTERACTION_VIDEO_MODELS = [
@@ -210,10 +209,16 @@ function isModelNotFoundError(err: unknown): boolean {
     );
 }
 
+function isApiKeyInvalidError(err: unknown): boolean {
+    const lower = getErrorText(err).toLowerCase();
+    return lower.includes('api_key_invalid') || lower.includes('api key not valid');
+}
+
 function isTryNextFreeModelError(err: unknown): boolean {
+    if (isApiKeyInvalidError(err)) return false;
     if (isModelNotFoundError(err)) return true;
     const status = extractErrorStatus(err);
-    return status === 402 || status === 403;
+    return status === 402 || status === 403 || status === 429;
 }
 
 async function discoverModelsForKey(
@@ -368,7 +373,6 @@ function formatGeminiError(
 
     if (
         statusCode === 402 ||
-        lower.includes('402') ||
         lower.includes('payment_required') ||
         lower.includes('prepay') ||
         lower.includes('credit balance')
@@ -381,25 +385,16 @@ function formatGeminiError(
                     : 'The active GEMINI_API_KEY returned HTTP 402 (credits exhausted on that project). In Settings > Secrets, link an active unpaid (free-tier) Gemini API key from Google AI Studio.',
         };
     }
-    if (
-        statusCode === 401 ||
-        statusCode === 403 ||
-        lower.includes('api_key_invalid') ||
-        lower.includes('permission_denied') ||
-        lower.includes('403') ||
-        lower.includes('401') ||
-        lower.includes('billing') ||
-        lower.includes('paid')
-    ) {
-        return {
-            status: 403,
-            message: 'Gemini API key is invalid or lacks permission for that model. Verify GEMINI_API_KEY in Settings > Secrets, or switch to an active free-tier key.',
-        };
-    }
-    if (statusCode === 429 || lower.includes('resource_exhausted') || lower.includes('429') || lower.includes('quota')) {
+    if (statusCode === 429 || lower.includes('resource_exhausted') || lower.includes('quota')) {
         return {
             status: 429,
             message: 'Rate limit or quota exceeded on the current API key. Please wait a moment and try again.',
+        };
+    }
+    if (isApiKeyInvalidError(err) || statusCode === 401 || statusCode === 403 || lower.includes('permission_denied')) {
+        return {
+            status: 403,
+            message: 'Gemini API key is invalid or lacks permission for that model. Verify GEMINI_API_KEY in Settings > Secrets, or switch to an active free-tier key.',
         };
     }
     if (lower.includes('safety') || lower.includes('filtered') || lower.includes('rai')) {
@@ -408,7 +403,7 @@ function formatGeminiError(
             message: 'The prompt or image was filtered by safety policies. Please try a different prompt or photo.',
         };
     }
-    if (statusCode === 404 || lower.includes('not_found') || lower.includes('404') || lower.includes('is not found')) {
+    if (statusCode === 404 || lower.includes('not_found') || lower.includes('is not found')) {
         return {
             status: 404,
             message: 'That model is not enabled for this API key or region. Try Chat, Live Voice, or Storyboard using a free-tier key.',
@@ -819,68 +814,90 @@ async function startServer() {
             `On a final separate line, include exact decimal coordinates formatted strictly as:\n` +
             `Coordinates: <latitude>, <longitude>`;
 
-        const candidateModels = ['gemini-4-hydrogen', 'gemini-2.5-flash'];
+        const mapsCandidateModels = ['gemini-4-hydrogen', 'gemini-3.8-flash'];
+        const plainFallbackModels = FALLBACK_CHAT_MODELS;
         let lastErr: unknown = null;
 
-        for (const model of candidateModels) {
-            try {
-                const response = await ai.models.generateContent({
-                    model,
-                    contents: prompt,
-                    config: {
-                        tools: [{ googleMaps: {} }],
-                        ...(hasBiasCoords
-                            ? {
-                                  toolConfig: {
-                                      retrievalConfig: {
-                                          latLng: { latitude: body.lat!, longitude: body.lon! },
-                                      },
-                                  },
-                              }
-                            : {}),
-                    },
-                });
+        const runLocateRequest = async (model: string, withMapsTool: boolean) => {
+            const response = await ai.models.generateContent({
+                model,
+                contents: prompt,
+                config: withMapsTool
+                    ? {
+                          tools: [{ googleMaps: {} }],
+                          ...(hasBiasCoords
+                              ? {
+                                    toolConfig: {
+                                        retrievalConfig: {
+                                            latLng: { latitude: body.lat!, longitude: body.lon! },
+                                        },
+                                    },
+                                }
+                              : {}),
+                      }
+                    : undefined,
+            });
 
-                const text = (response.text || '').trim();
-                const mapsLinks = extractMapsGroundingLinks(response);
+            const text = (response.text || '').trim();
+            const mapsLinks = withMapsTool ? extractMapsGroundingLinks(response) : [];
 
-                let resolvedLat: number | null = null;
-                let resolvedLon: number | null = null;
-                const coordMatch = text.match(/Coordinates\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i);
-                if (coordMatch) {
-                    const pLat = parseFloat(coordMatch[1]);
-                    const pLon = parseFloat(coordMatch[2]);
-                    if (
-                        Number.isFinite(pLat) &&
-                        Number.isFinite(pLon) &&
-                        pLat >= -90 &&
-                        pLat <= 90 &&
-                        pLon >= -180 &&
-                        pLon <= 180 &&
-                        !(Math.abs(pLat) < 0.01 && Math.abs(pLon) < 0.01)
-                    ) {
-                        resolvedLat = pLat;
-                        resolvedLon = pLon;
-                    }
+            let resolvedLat: number | null = null;
+            let resolvedLon: number | null = null;
+            const coordMatch = text.match(/Coordinates\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i);
+            if (coordMatch) {
+                const pLat = parseFloat(coordMatch[1]);
+                const pLon = parseFloat(coordMatch[2]);
+                if (
+                    Number.isFinite(pLat) &&
+                    Number.isFinite(pLon) &&
+                    pLat >= -90 &&
+                    pLat <= 90 &&
+                    pLon >= -180 &&
+                    pLon <= 180 &&
+                    !(Math.abs(pLat) < 0.01 && Math.abs(pLon) < 0.01)
+                ) {
+                    resolvedLat = pLat;
+                    resolvedLon = pLon;
                 }
+            }
 
-                res.json({
-                    text,
-                    lat: resolvedLat,
-                    lon: resolvedLon,
-                    mapsLinks,
-                    model,
-                });
+            res.json({
+                text,
+                lat: resolvedLat,
+                lon: resolvedLon,
+                mapsLinks,
+                model,
+            });
+        };
+
+        for (const model of mapsCandidateModels) {
+            try {
+                await runLocateRequest(model, true);
                 return;
             } catch (err) {
                 lastErr = err;
                 if (isTryNextFreeModelError(err)) {
-                    console.warn(`Maps grounding model '${model}' unavailable, trying fallback...`);
+                    console.warn(`Maps grounding model '${model}' unavailable (${extractErrorStatus(err) || 'err'}), trying fallback...`);
                     continue;
                 }
                 const formatted = formatGeminiError(err, 'chat');
                 res.status(formatted.status).json({ error: formatted.message });
                 return;
+            }
+        }
+
+        if (!isApiKeyInvalidError(lastErr)) {
+            for (const model of plainFallbackModels) {
+                try {
+                    await runLocateRequest(model, false);
+                    return;
+                } catch (err) {
+                    lastErr = err;
+                    if (isTryNextFreeModelError(err)) {
+                        continue;
+                    }
+                    break;
+                }
             }
         }
 
@@ -928,40 +945,61 @@ async function startServer() {
         const history = sanitizeHistory(body.history);
 
         const cachedChat = workingChatModelByKey.get(keyHash);
-        const candidateModels = useMapsGrounding
-            ? Array.from(new Set(['gemini-4-hydrogen', 'gemini-2.5-flash']))
-            : Array.from(
-                  new Set([
-                      requestedModel,
-                      ...(cachedChat ? [cachedChat] : []),
-                      ...FALLBACK_CHAT_MODELS,
-                  ])
-              );
+        const mapsCandidateModels = ['gemini-4-hydrogen', 'gemini-3.8-flash'];
+        const plainCandidateModels = Array.from(
+            new Set([
+                requestedModel,
+                ...(cachedChat ? [cachedChat] : []),
+                ...FALLBACK_CHAT_MODELS,
+            ])
+        );
 
         try {
             let stream: Awaited<ReturnType<typeof createStreamWithRetry>> | null = null;
             let lastErr: unknown;
 
-            for (const candidateModel of candidateModels) {
-                try {
-                    stream = await createStreamWithRetry(
-                        ai,
-                        candidateModel,
-                        systemInstruction,
-                        history,
-                        message,
-                        useMapsGrounding ? { enabled: true, lat: body.lat, lon: body.lon } : undefined
-                    );
-                    if (!useMapsGrounding) {
+            if (useMapsGrounding) {
+                for (const candidateModel of mapsCandidateModels) {
+                    try {
+                        stream = await createStreamWithRetry(
+                            ai,
+                            candidateModel,
+                            systemInstruction,
+                            history,
+                            message,
+                            { enabled: true, lat: body.lat, lon: body.lon }
+                        );
+                        break;
+                    } catch (err) {
+                        lastErr = err;
+                        if (!isTryNextFreeModelError(err)) {
+                            throw err;
+                        }
+                        console.warn(`Maps chat model '${candidateModel}' unavailable (${extractErrorStatus(err) || 'err'}), trying next fallback...`);
+                    }
+                }
+            }
+
+            if (!stream && !isApiKeyInvalidError(lastErr)) {
+                for (const candidateModel of plainCandidateModels) {
+                    try {
+                        stream = await createStreamWithRetry(
+                            ai,
+                            candidateModel,
+                            systemInstruction,
+                            history,
+                            message,
+                            undefined
+                        );
                         workingChatModelByKey.set(keyHash, candidateModel);
+                        break;
+                    } catch (err) {
+                        lastErr = err;
+                        if (!isTryNextFreeModelError(err)) {
+                            throw err;
+                        }
+                        console.warn(`Chat model '${candidateModel}' unavailable (${extractErrorStatus(err) || 'err'}), trying next fallback...`);
                     }
-                    break;
-                } catch (err) {
-                    lastErr = err;
-                    if (!isTryNextFreeModelError(err)) {
-                        throw err;
-                    }
-                    console.warn(`Chat model '${candidateModel}' unavailable (${extractErrorStatus(err) || 'err'}), trying next fallback...`);
                 }
             }
 
