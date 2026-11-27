@@ -1,4 +1,4 @@
-name: Build Android App Bundle (TWA)
+name: Build Android APK and App Bundle (TWA)
 
 on:
   pull_request:
@@ -70,6 +70,20 @@ jobs:
         with:
           name: birds-on-earth-radio-unsigned-aab
           path: ${{ runner.temp }}/android-project/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Build and verify debug APK for Internal App Sharing
+        working-directory: ${{ runner.temp }}/android-project
+        run: |
+          ./gradlew --no-daemon assembleDebug
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk"
+          cp "$apk" "$RUNNER_TEMP/Birds-on-Earth-Radio-0.5.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: birds-on-earth-radio-internal-sharing-apk
+          path: ${{ runner.temp }}/Birds-on-Earth-Radio-0.5.apk
           if-no-files-found: error
           retention-days: 7
 
