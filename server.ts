@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI, Modality, ThinkingLevel } from '@google/genai';
 import type { Content, GenerateContentResponse } from '@google/genai';
-import { handleRadioProxy, resolveStationStreams } from './services/radioStreamService.js';
+import { handleRadioProxy, resolveStationStreams } from './services/radioStreamService.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
